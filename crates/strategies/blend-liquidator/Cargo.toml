@@ -1,0 +1,25 @@
+[package]
+name = "blend-liquidator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+## stellar
+ingest = "^0.0.3"
+stellar-xdr = { version = "20.0.0-rc1", features = ["std", "curr", "next", "base64", "serde"] }
+
+## eth
+artemis-core = { path = "../../artemis-core" }
+ethers.workspace = true
+opensea-stream = { git = "https://github.com/FrankieIsLost/opensea-stream-rs"}
+opensea-v2 = { path = "../../clients/opensea-v2" }
+
+## async
+async-trait = "0.1.64"
+
+## misc
+anyhow = "1.0.70"
+tracing = "0.1.37"
+
+
