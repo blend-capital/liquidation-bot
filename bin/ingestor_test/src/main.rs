@@ -4,8 +4,9 @@ use stellar_xdr::next::{ContractEvent, ContractEventType, LedgerCloseMeta, Trans
 const TARGET_SEQ: u32 = 387468;
 
 pub fn main() {
+    // "usr/local/bin/stellar-core"
     let config = IngestionConfig {
-        executable_path: "/usr/local/bin/stellar-core".to_string(),
+        executable_path: "/Users/markuspaulsonluna/Dev/stellar-core/src/stellar-core/".to_string(),
         context_path: Default::default(),
         network: ingest::SupportedNetwork::Futurenet,
         bounded_buffer_size: None,

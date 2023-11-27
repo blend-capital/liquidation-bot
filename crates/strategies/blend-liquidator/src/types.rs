@@ -1,30 +1,63 @@
+use std::collections::HashMap;
+
 use artemis_core::{
     collectors::{block_collector::NewBlock, opensea_order_collector::OpenseaOrder},
-    executors::mempool_executor::SubmitTxToMempool,
+    executors::soroban_executor::SubmitStellarTx,
 };
 use opensea_v2::types::{
     FulfillListingRequest, FulfillListingResponse, Fulfiller, Listing, ProtocolVersion,
 };
-use stellar_xdr::next::{ContractEvent, VecM};
+// use soroban_client::xdr;
+use stellar_baselib::soroban_data_builder::SorobanDataBuilder;
+use stellar_xdr::next::{ContractEvent, Hash, ReadXdr, ScAddress, ScVal, VecM};
 
 /// Core Event enum for the current strategy.
 #[derive(Debug, Clone)]
 pub enum Event {
     SorobanEvents(Box<VecM<ContractEvent>>),
+    NewBlock(NewBlock),
 }
 
 /// Core Action enum for the current strategy.
 #[derive(Debug, Clone)]
 pub enum Action {
-    SubmitTx(SubmitTxToMempool),
+    SubmitTx(SubmitStellarTx),
 }
 
-// /// Configuration for variables we need to pass to the strategy.
-// #[derive(Debug, Clone)]
-// pub struct Config {
-//     pub arb_contract_address: H160,
-//     pub bid_percentage: u64,
-// }
+/// Configuration for variables we need to pass to the strategy.
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub pools: Vec<Hash>,
+    pub assets: Vec<Hash>,
+    pub bid_percentage: u64,
+    pub oracle_id: Hash,
+    pub us: Hash,
+    pub min_hf: i128,
+}
+#[derive(Debug, Clone)]
+pub struct PendingFill {
+    pub pool: Hash,
+    pub user: String,
+    pub collateral: HashMap<Hash, i128>,
+    pub liabilities: HashMap<Hash, i128>,
+    pub pct_filled: u64,
+    pub target_block: u64,
+    pub interest_auction: bool,
+}
+#[derive(Debug, Clone)]
+
+pub struct UserPositions {
+    pub collateral: HashMap<Hash, i128>,
+    pub liabilities: HashMap<Hash, i128>,
+}
+#[derive(Debug, Clone)]
+
+pub struct ReserveConfig {
+    pub liability_factor: i128,
+    pub collateral_factor: i128,
+    pub est_b_rate: i128,
+    pub est_d_rate: i128,
+}
 
 // /// Convenience function to convert a hash to a fulfill listing request
 // pub fn hash_to_fulfill_listing_request(hash: H256) -> FulfillListingRequest {

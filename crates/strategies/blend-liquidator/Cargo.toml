@@ -7,7 +7,9 @@ edition = "2021"
 
 ## stellar
 ingest = "^0.0.3"
-stellar-xdr = { version = "20.0.0-rc1", features = ["std", "curr", "next", "base64", "serde"] }
+soroban-client = "0.1.9"
+stellar-baselib = "0.2.5"
+stellar-xdr = { version = "20.0.0-rc1", default-features = true, features = [] }
 
 ## eth
 artemis-core = { path = "../../artemis-core" }

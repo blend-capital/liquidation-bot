@@ -1,289 +1,330 @@
-// use std::collections::HashMap;
+use std::collections::HashMap;
 
-// use std::sync::Arc;
+use std::future::Pending;
+use std::sync::Arc;
+use std::str::FromStr;
 
-// use async_trait::async_trait;
+use async_trait::async_trait;
 
-// use stellar_xdr::next::{ContractEvent, VecM};
-// use tracing::info;
+use ethers::contract::multicall_contract;
+use stellar_xdr::next::{ContractEvent,ContractEventBody, ScAddress, VecM, Hash, ContractEventV0, ScSymbol, StringM, WriteXdr};
+use tracing::info;
 
-// use crate::constants::FACTORY_DEPLOYMENT_BLOCK;
-// use crate::types::Config;
-// use anyhow::Result;
-// use artemis_core::collectors::block_collector::NewBlock;
-// use artemis_core::collectors::opensea_order_collector::OpenseaOrder;
-// use artemis_core::executors::soroban_executor::{GasBidInfo, SubmitStellarTx};
-// use artemis_core::types::Strategy;
-// use artemis_core::utilities::state_override_middleware::StateOverrideMiddleware;
-// use ethers::providers::Middleware;
-// use ethers::types::{Filter, H256};
-// use ethers::types::{H160, U256};
-// use opensea_stream::schema::Chain;
-// use opensea_v2::client::OpenSeaV2Client;
+use crate::constants::FACTORY_DEPLOYMENT_BLOCK;
+use crate::types::{Config, UserPositions, ReserveConfig};
+use anyhow::Result;
+use artemis_core::collectors::block_collector::NewBlock;
+use artemis_core::collectors::opensea_order_collector::OpenseaOrder;
+use artemis_core::executors::soroban_executor::{GasBidInfo, SubmitStellarTx};
+use artemis_core::types::Strategy;
+use artemis_core::utilities::state_override_middleware::StateOverrideMiddleware;
+use ethers::providers::Middleware;
+use ethers::types::{Filter, H256};
+use ethers::types::{H160, U256};
+use opensea_stream::schema::Chain;
+use opensea_v2::client::OpenSeaV2Client;
 
-// use super::types::{
-//     fulfill_listing_response_to_basic_order_parameters, hash_to_fulfill_listing_request, Action,
-//     Event,
-// };
+use super::types::{
+    Action,
+    Event,PendingFill
+};
 
-// #[derive(Debug, Clone)]
-// pub struct BlendLiquidator {
-//     /// Ethers client.
-//     // client: Arc<M>,
-//     /// Opensea V2 client
-//     // opensea_client: OpenSeaV2Client,
-//     /// LSSVM pair factory contract for getting pair history.
-//     // lssvm_pair_factory: Arc<LSSVMPairFactory<M>>,
-//     /// Quoter for batch reading pair state.
-//     // quoter: SudoPairQuoter<StateOverrideMiddleware<Arc<M>>>,
-//     /// Arb contract.
-//     // arb_contract: SudoOpenseaArb<M>,
-//     /// Map NFT addresses to a list of Sudo pair addresses which trade that NFT.
-//     // sudo_pools: HashMap<H160, Vec<H160>>,
-//     /// Map Sudo pool addresses to the current bid for that pool (in ETH).
-//     // pool_bids: HashMap<H160, U256>,
-//     /// Amount of profits to bid in gas
-//     bid_percentage: u64,
-// }
+#[derive(Debug, Clone)]
+pub struct BlendLiquidator {
+    /// Ethers client.
+    // client: Arc<M>,
+    /// Opensea V2 client
+    // opensea_client: OpenSeaV2Client,
+    /// LSSVM pair factory contract for getting pair history.
+    // lssvm_pair_factory: Arc<LSSVMPairFactory<M>>,
+    /// Quoter for batch reading pair state.
+    // quoter: SudoPairQuoter<StateOverrideMiddleware<Arc<M>>>,
+    /// Assets we're interested in
+    assets: Vec<Hash>,
+    /// Map Assets to bid on and their prices
+    asset_prices: HashMap<Hash, i128>,
+    /// Vec of Blend pool addresses to bid on auctions in
+    pools: Vec<Hash>,
+    /// Oracle ID for getting asset prices
+    oracle_id: Hash,
+    /// Amount of profits to bid in gas
+    bid_percentage: u64,
+    /// Pending auction fills
+    pending_fill: Vec<PendingFill>,
+    /// Map of users and their positions in pools
+    users: HashMap<Hash, HashMap<Hash,UserPositions>>,
+    /// Map of pools and their reserve configurations
+    reserve_configs: HashMap<Hash, HashMap<Hash,ReserveConfig>>,
+    /// Our positions
+    bankroll: HashMap<Hash,UserPositions>,
+    /// Our address
+    us: Hash,
+    // Our minimum health factor
+    min_hf: i128,
+    
+}
 
-// impl BlendLiquidator {
-//     pub fn new( config: Config) -> Self {
-//         // // Set up LSSVM pair factory contract.
-//         // let lssvm_pair_factory = Arc::new(LSSVMPairFactory::new(
-//         //     *LSSVM_PAIR_FACTORY_ADDRESS,
-//         //     client.clone(),
-//         // ));
-//         // // Set up Sudo pair quoter contract.
-//         // let mut state_override = StateOverrideMiddleware::new(client.clone());
-//         // // Override account with contract bytecode
-//         // let addr = state_override.add_code(SUDOPAIRQUOTER_DEPLOYED_BYTECODE.clone());
-//         // // Instantiate contract with override client
-//         // let quoter = SudoPairQuoter::new(addr, Arc::new(state_override));
-//         // // Set up arb contract.
-//         // let arb_contract = SudoOpenseaArb::new(config.arb_contract_address, client.clone());
+impl BlendLiquidator {
+    pub fn new(config: Config) -> Self {
+        // // Set up LSSVM pair factory contract.
+        // let lssvm_pair_factory = Arc::new(LSSVMPairFactory::new(
+        //     *LSSVM_PAIR_FACTORY_ADDRESS,
+        //     client.clone(),
+        // ));
+        // // Set up Sudo pair quoter contract.
+        // let mut state_override = StateOverrideMiddleware::new(client.clone());
+        // // Override account with contract bytecode
+        // let addr = state_override.add_code(SUDOPAIRQUOTER_DEPLOYED_BYTECODE.clone());
+        // // Instantiate contract with override client
+        // let quoter = SudoPairQuoter::new(addr, Arc::new(state_override));
+        // // Set up arb contract.
+        // let arb_contract = SudoOpenseaArb::new(config.arb_contract_address, client.clone());
 
-//         Self {
-//             // client,
-//             // opensea_client,
-//             // lssvm_pair_factory,
-//             // quoter,
-//             // arb_contract,
-//             // sudo_pools: HashMap::new(),
-//             // pool_bids: HashMap::new(),
-//             bid_percentage: config.bid_percentage,
-//         }
-//     }
-// }
+        Self {
+            // client,
+            // opensea_client,
+            // lssvm_pair_factory,
+            // quoter,
+            // arb_contract,
+            assets : config.assets,
+            asset_prices: HashMap::new(),
+            pools: config.pools,
+            oracle_id: config.oracle_id,
+            bid_percentage: config.bid_percentage,
+            pending_fill: vec![],
+            users: HashMap::new(),
+            reserve_configs: HashMap::new(),
+            bankroll: HashMap::new(),
+            us: config.us,
+            min_hf: config.min_hf,
+        }
+    }
+}
 
-// #[async_trait]
-// impl Strategy<Event, Action> for BlendLiquidator {
-//     // In order to sync this strategy, we need to get the current bid for all Sudo pools.
-//     async fn sync_state(&mut self) -> Result<()> {
-//         // // Block in which the pool factory was deployed.
-//         // let start_block = FACTORY_DEPLOYMENT_BLOCK;
+#[async_trait]
+impl Strategy<Event, Action> for BlendLiquidator {
+    // In order to sync this strategy, we need to get the current bid for all Sudo pools.
+    async fn sync_state(&mut self) -> Result<()> {
+        // // Block in which the pool factory was deployed.
+        // let start_block = FACTORY_DEPLOYMENT_BLOCK;
 
-//         // let current_block = self.client.get_block_number().await?.as_u64();
+        // let current_block = self.client.get_block_number().await?.as_u64();
 
-//         // // Get all Sudo pool addresses deployed in the block range.
-//         // let pool_addresses = self.get_new_pools(start_block, current_block).await?;
-//         // info!("found {} deployed sudo pools", pool_addresses.len());
+        // Get all asset prices
+        self.get_asset_prices(self.assets.clone()).await?;
 
-//         // // Get current bids for update state for all Sudo pools.
-//         // for addresses in pool_addresses.chunks(200) {
-//         //     let quotes = self.get_quotes_for_pools(addresses.to_vec()).await?;
-//         //     self.update_internal_pool_state(quotes);
-//         // }
-//         // info!(
-//         //     "done syncing state, found available pools for {} collections",
-//         //     self.sudo_pools.len()
-//         // );
+        // Get user positions in given pools - also fill in our positions
 
-//         Ok(())
-//     }
+        // Get reserve configs for given pools
 
-//     // Process incoming events, seeing if we can arb new orders, and updating the internal state on new blocks.
-//     async fn process_event(&mut self, event: Event)-> Result<()> {
-//         // -> Vec<Action>
-//         match event {
-//             Event::SorobanEvents(events) => {
-//                 let events = *events;
-//                 println!("received {} soroban events ", events.len());
-//                 Ok(())
-//             }
+        // info!(
+        //     "done syncing state, found available pools for {} collections",
+        //     self.sudo_pools.len()
+        // );
 
-//             // self
-//             //     .process_soroban_events(events)
-//             //     .await
-//             //     .map_or(vec![], |a| vec![a]),
-//         }
-//     }
-// }
+        Ok(())
+    }
 
-// impl<M: Middleware + 'static> OpenseaSudoArb<M> {
-//     // Process new orders as they come in.
-//     async fn process_soroban_events(&mut self, event: Box<VecM<ContractEvent>>) -> Option<Action> {
-//         let nft_address = event.listing.context.item.nft_id.address;
-//         info!("processing order event for address {}", nft_address);
+    // Process incoming events, filter non-auction events, decide if we care about auctions
+    async fn process_event(&mut self, event: Event) -> Vec<Action> {
+        //
+        let mut actions: Vec<Action> = [].to_vec();
+        match event {
+            Event::SorobanEvents(events) => {
+                let events = *events;
+                println!("received {} soroban events ", events.len());
+                
+            },
+            Event::NewBlock(block) => {
+                //TODO decide whether we need to execute a pending auction
+            }
+            // self
+            //     .process_soroban_events(events)
+            //     .await
+            //     .map_or(vec![], |a| vec![a]),
+        }
+        actions
+    }
+}
 
-//         // Ignore orders that are not on Ethereum.
-//         match event.listing.context.item.nft_id.network {
-//             Chain::Ethereum => {}
-//             _ => return None,
-//         }
-//         // Ignore orders with non-eth payment.
-//         if event.listing.payment_token.address != H160::zero() {
-//             return None;
-//         }
+impl BlendLiquidator {
+    // Process new orders as they come in.
+    async fn process_soroban_events(&mut self, events: VecM<ContractEvent>) -> Option<Action> {
+        //should build pending auctions and remove or modify pending auctions that are filled or partially filled by someone else
+        for event in events.iter() {
+            let contract_id = event.contract_id.clone().unwrap();
+            if self.oracle_id != contract_id && !self.pools.contains(&(&contract_id)) {
+                continue;
+            }
+            // ContractEventBody::V0(event);
+            // let body_v0 = event.body();
+            let body = event.body.clone();
+      
+            match body {
+                ContractEventBody::V0(v0) => {
+                    let name = v0.topics.get(0).unwrap();
+                    let data = v0.data.clone();
 
-//         // Find pool with highest bid.
-//         let pools = self.sudo_pools.get(&nft_address)?;
-//         let (max_pool, max_bid) = pools
-//             .iter()
-//             .filter_map(|pool| self.pool_bids.get(pool).map(|bid| (pool, bid)))
-//             .max_by(|a, b| a.1.cmp(b.1))?;
+                    let name_xdr = name.to_xdr().unwrap();
+                    if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("new_liquidation_auction").unwrap())).to_xdr().unwrap()) {
+                        let collateral: HashMap<Hash, i128> = HashMap::new(); //TODO grab from event
+                        let liabilities: HashMap<Hash, i128> = HashMap::new(); //TODO grab from event
+                        let user: Hash = Hash([0; 32]); //TODO grab from event 
+                        self.create_pending_fill(contract_id.clone(), user, collateral, liabilities, false)
+                        // Decide whether to fill this auction based on if we're comfortable with the assets being auctioned off
+                        // Decide when to fill this auction based on our required profitability
+                        // Decide how much of this auction to fill based on the amount of assets we can support given pool positions
+                        // If yes add to a list of pending auctions (pct filled 0%)
+                       
+                    } else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("delete_liquidation_auction").unwrap())).to_xdr().unwrap()) {
+                        // If this was an auction we were planning on filling, remove it from the pending list
+                    } else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("new_auction").unwrap())).to_xdr().unwrap()) {
+                        // If a bad debt auction
+                            // Decide whether to fill this auction based on if we're comfortable with the assets being auctioned off
+                            // Decide when to fill this auction based on our required profitability
+                            // Decide how much of this auction to fill based on the amount of assets we can support given pool positions
+                            // If yes add to a list of pending auctions (pct filled 0%)
+                        // If an interest auction
+                            // Decide whether to fill this auction based on whether we're comfortable with the assets being auctioned off
+                            // Decide when to fill this auction based on our required profitability
+                            // Decide how much of this auction to fill based on how much USDC we have/can source - we will attempt to borrow the necessary USDC from the pool holding the auction (this just keeps the bot simple)
+                    } else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("fill_auction").unwrap())).to_xdr().unwrap()) {
+                        // Check if we were planning on filling the auction
+                        // If yes, if the fill percent was 100 then remove it from the pending list
+                        // If the fill percent was less than 100 then update the pending list with the new fill percent (consider the last fill percent, new fill pct = old_pct+((1-old_pct)*new_pct) )
+                        // also update the percent that we were planning on filling 
+                        // Note: we gotta differentiate btw backstop and interest auctions here
+                        // we should check whether bad debt was created if the auction was filled post 200 blocks and if so attempt to move bad debt to the backstop and see if we can liquidate it - may be uneccesary
+                     } else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("update_reserve").unwrap())).to_xdr().unwrap()) {
+                        // Update the reserve config for the pool
+                    }else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("supply").unwrap())).to_xdr().unwrap()) {
+                        // Update reserve estimated b rate by using request.amount/b_tokens_minted from the emitted event
+                    }else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("withdraw").unwrap())).to_xdr().unwrap()) {
+                        // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
+                    }else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("supply_collateral").unwrap())).to_xdr().unwrap()) {
+                        // Update reserve estimated b rate by using request.amount/b_tokens_minted from the emitted event
+                        // Update users collateral positions
+                    }else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("withdraw_collateral").unwrap())).to_xdr().unwrap()) {
+                        // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
+                        // Update users collateral positions
+                    }else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("borrow").unwrap())).to_xdr().unwrap()) {
+                        // Update reserve estimated d rate by using request.amount/d tokens minted from the emitted event
+                        // Update users liability positions
+                    }else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("repay").unwrap())).to_xdr().unwrap()) {
+                        // Update reserve estimated d rate by using request.amount/d tokens burnt from the emitted event
+                        // Update users liability positions
+                    }else if name_xdr.eq(&stellar_xdr::next::ScVal::Symbol(ScSymbol::from(StringM::from_str("oracle_update").unwrap())).to_xdr().unwrap()) {
+                        // Update the asset price
+                        // Check if we can liquidate anyone based on the new price
+                        // If we can, create an auction
+                        // We probably need to re-assess auction profitability here
+                    }
 
-//         // Ignore orders that are not profitable.
-//         if max_bid <= &event.listing.base_price {
-//             return None;
-//         }
+                         
+                    else {
+                        //No action needed 
+                        println!("unknown event");
+                    }
 
-//         // Build arb tx.
-//         self.build_arb_tx(event.listing.order_hash, *max_pool, *max_bid)
-//             .await
-//     }
+                }
+                _ => {
+                    //TODO
+                    println!("unknown event");
+                }
+            }            
 
-//     /// Process new block events, updating the internal state.
-//     async fn process_new_block_event(&mut self, event: NewBlock) -> Result<()> {
-//         info!("processing new block {}", event.number);
-//         // Find new pools tthat were created in the last block.
-//         let new_pools = self
-//             .get_new_pools(event.number.as_u64(), event.number.as_u64())
-//             .await?;
-//         // Find existing pools that were touched in the last block.
-//         let touched_pools = self
-//             .get_touched_pools(event.number.as_u64(), event.number.as_u64())
-//             .await?;
-//         // Get quotes for all new and touched pools and update state.
-//         let quotes = self
-//             .get_quotes_for_pools([new_pools, touched_pools].concat())
-//             .await?;
-//         self.update_internal_pool_state(quotes);
-//         Ok(())
-//     }
+        }
+         
+        None
+        // Build arb tx.
+        // self.build_arb_tx(event.listing.order_hash, *max_pool, *max_bid)
+        //     .await
+        
+    }
 
-//     /// Build arb tx from order hash and sudo pool params.
-//     async fn build_arb_tx(
-//         &self,
-//         order_hash: H256,
-//         sudo_pool: H160,
-//         sudo_bid: U256,
-//     ) -> Option<Action> {
-//         // Get full order from Opensea V2 API.
-//         let response = self
-//             .opensea_client
-//             .fulfill_listing(hash_to_fulfill_listing_request(order_hash))
-//             .await;
-//         let order = match response {
-//             Ok(order) => order,
-//             Err(e) => {
-//                 info!("Error getting order from opensea: {}", e);
-//                 return None;
-//             }
-//         };
+    /// Process new block events, updating the internal state.
+    fn process_new_block_event(&mut self, event: NewBlock,actions: &mut Vec<Action>) -> Option<Vec<Action>> {
+        for pending in self.pending_fill.iter_mut(){   
+            if pending.target_block <= event.number.as_u64() {
+                // Create a fill tx
+            }
+        }
+        None
+    }
 
-//         // Parse out arb contract parameters.
-//         let payment_value = order.fulfillment_data.transaction.value;
-//         let total_profit = sudo_bid - payment_value;
+    async fn get_asset_prices(&mut self, assets: Vec<Hash>) -> Result<()> {
+        // get asset prices from oracle
+        let oracle_prices: Vec<i128> = vec![]; //TODO
+        let res = assets
+            .into_iter()
+            .zip(oracle_prices)
+            .collect::<HashMap<Hash, i128>>();
+        self.asset_prices = res.clone();
+        Ok(())
+    }
 
-//         // Build arb tx.
-//         let tx = self
-//             .arb_contract
-//             .execute_arb(
-//                 fulfill_listing_response_to_basic_order_parameters(order),
-//                 payment_value.into(),
-//                 sudo_pool,
-//             )
-//             .tx;
-//         Some(Action::SubmitTx(SubmitTxToMempool {
-//             tx,
-//             gas_bid_info: Some(GasBidInfo {
-//                 total_profit,
-//                 bid_percentage: self.bid_percentage,
-//             }),
-//         }))
-//     }
+    async fn get_reserve_config(&mut self, assets: Vec<Hash>) {
+        //TODO
+        // we need to use a client to grab pool data and run through it to get reserve config for assets 
 
-//     /// Get quotes for a list of pools.
-//     async fn get_quotes_for_pools(&self, pools: Vec<H160>) -> Result<Vec<(H160, SellQuote)>> {
-//         let quotes = self.quoter.get_multiple_sell_quotes(pools.clone()).await?;
-//         let res = pools
-//             .into_iter()
-//             .zip(quotes)
-//             .collect::<Vec<(H160, SellQuote)>>();
-//         Ok(res)
-//     }
+    }
 
-//     /// Update the internal state of the strategy with new pool addresses and quotes.
-//     fn update_internal_pool_state(&mut self, pools_and_quotes: Vec<(H160, SellQuote)>) {
-//         for (pool_address, quote) in pools_and_quotes {
-//             // If a quote is available, update both the pool_bids and the sudo_pools maps.
-//             if quote.quote_available {
-//                 self.pool_bids.insert(pool_address, quote.price);
-//                 self.sudo_pools
-//                     .entry(quote.nft_address)
-//                     .or_insert(vec![])
-//                     .push(pool_address);
-//             }
-//             // If a quote is unavailable, remove from both the pool_bids and the sudo_pools maps.
-//             else {
-//                 self.pool_bids.remove(&pool_address);
-//                 if let Some(addresses) = self.sudo_pools.get_mut(&quote.nft_address) {
-//                     addresses.retain(|address| *address != pool_address);
-//                 }
-//             }
-//         }
-//     }
+    async fn update_user_positions(&mut self, pool: Hash) {
+        //TODO
+        // we need to use the client to grab all users and store their positions - also needs to recognize us and store our position data in the bankroll
+    }
 
-//     /// Find all pools that were touched in a given block range.
-//     async fn get_touched_pools(&self, from_block: u64, to_block: u64) -> Result<Vec<H160>> {
-//         let address_list = self.pool_bids.keys().cloned().collect::<Vec<_>>();
-//         let filter = Filter::new()
-//             .from_block(from_block)
-//             .to_block(to_block)
-//             .address(address_list)
-//             .events(&*POOL_EVENT_SIGNATURES);
+     fn check_health(&self, user: Hash) -> bool {
+        //TODO
+        // Check user health return true if healthy
+        true
+    }
 
-//         let events = self.client.get_logs(&filter).await?;
-//         let touched_pools = events.iter().map(|event| event.address).collect::<Vec<_>>();
-//         Ok(touched_pools)
-//     }
+    fn create_pending_fill(&mut self, pool: Hash, user: Hash, collateral: HashMap<Hash, i128>, liabilities: HashMap<Hash, i128>, interest_auction: bool) {
+        //TODO
+        // Create a pending fill and add it to the pending fill list
+    }
 
-//     /// Find all pools that were created in a given block range.
-//     async fn get_new_pools(&self, from_block: u64, to_block: u64) -> Result<Vec<H160>> {
-//         let mut pool_addresses = vec![];
+    /// Build arb tx from order hash and sudo pool params.
+    async fn build_create_auction_tx(
+        &self,
+        order_hash: H256,
+        sudo_pool: H160,
+        sudo_bid: U256,
+    ) -> Option<Action> {
+        // Get full order from Opensea V2 API.
+        let response = self
+            .opensea_client
+            .fulfill_listing(hash_to_fulfill_listing_request(order_hash))
+            .await;
+        let order = match response {
+            Ok(order) => order,
+            Err(e) => {
+                info!("Error getting order from opensea: {}", e);
+                return None;
+            }
+        };
 
-//         // Maxium range for a single Alchemy query is 2000 blocks.
-//         for block in (from_block..to_block).step_by(2000) {
-//             let events = self
-//                 .lssvm_pair_factory
-//                 .event::<NewPairFilter>()
-//                 .from_block(block)
-//                 .to_block(block + 2000)
-//                 .query()
-//                 .await?;
+        // Parse out arb contract parameters.
+        let payment_value = order.fulfillment_data.transaction.value;
+        let total_profit = sudo_bid - payment_value;
 
-//             let addresses = events
-//                 .iter()
-//                 .map(|event| event.pool_address)
-//                 .collect::<Vec<_>>();
+        // Build arb tx.
+        let tx = self
+            .arb_contract
+            .execute_arb(
+                fulfill_listing_response_to_basic_order_parameters(order),
+                payment_value.into(),
+                sudo_pool,
+            )
+            .tx;
+        Some(Action::SubmitTx(SubmitTxToMempool {
+            tx,
+            gas_bid_info: Some(GasBidInfo {
+                total_profit,
+                bid_percentage: self.bid_percentage,
+            }),
+        }))
+    }
 
-//             info!(
-//                 "found {} new pools in block range, total progress: {}%",
-//                 addresses.len(),
-//                 100 * (block - from_block) / (to_block - from_block)
-//             );
-//             pool_addresses.extend(addresses);
-//         }
-//         Ok(pool_addresses)
-//     }
-// }
+}

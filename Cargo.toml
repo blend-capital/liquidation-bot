@@ -15,13 +15,12 @@ default-members = ["bin/artemis", "bin/cli", "bin/ingestor_test"]
 [workspace.dependencies]
 ## stellar
 ingest = "^0.0.3"
-stellar-xdr = { version = "20.0.0-rc1", features = ["std", "curr", "next", "base64", "serde"] }
 soroban-client = "0.1.9"
-
+stellar-baselib = "0.2.5"
+stellar-xdr = { version = "20.0.0-rc1", default-features = true, features = [] }
 
 ## eth
 ethers = { version = "2", features = ["ws", "rustls"]}
-ethers-signers = "2.0"
 
 
 [profile.release]
