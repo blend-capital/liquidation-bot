@@ -1,28 +1,25 @@
 use anyhow::Result;
-use artemis_core::collectors::log_collector::LogCollector;
-use clap::Parser;
-use ethers::types::H160;
-use ingest::SupportedNetwork;
-use opensea_v2::client::{OpenSeaApiConfig, OpenSeaV2Client};
-
-use ethers::prelude::MiddlewareBuilder;
-use ethers::providers::{Provider, Ws};
-
 use artemis_core::collectors::block_collector::BlockCollector;
-use artemis_core::collectors::opensea_order_collector::OpenseaOrderCollector;
-use artemis_core::executors::soroban_executor::SorobanExecutor;
-use blend_liquidator::types::{Action, Event};
-use ethers::signers::{LocalWallet, Signer};
-use opensea_sudo_arb::strategy::OpenseaSudoArb;
-use tracing::{info, Level};
-use tracing_subscriber::{filter, prelude::*};
+use artemis_core::collectors::log_collector::LogCollector;
+use blend_liquidator::strategy::BlendLiquidator;
+use blend_liquidator::types::Config;
+use clap::Parser;
+
+// use artemis_core::collectors::block_collector::BlockCollector;
+// use artemis_core::executors::soroban_executor::SorobanExecutor;
+use blend_liquidator::types::{ Action, Event };
+use stellar_xdr::next::Hash;
+// use opensea_sudo_arb::strategy::OpenseaSudoArb;
+use tracing::{ info, Level };
+use tracing_subscriber::{ filter, prelude::* };
 
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{ Arc };
+use std::sync::mpsc::{ channel };
 
 use artemis_core::engine::Engine;
-use artemis_core::types::{CollectorMap, ExecutorMap};
-
+use artemis_core::types::{ CollectorMap, ExecutorMap };
+use soroban::server::{ Server, EventFilter, EventType };
 /// CLI Options.
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -52,16 +49,14 @@ pub struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Set up tracing and parse args.
-    let filter = filter::Targets::new()
+    let filter = filter::Targets
+        ::new()
         .with_target("opensea_sudo_arb", Level::INFO)
         .with_target("artemis_core", Level::INFO);
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(filter)
-        .init();
+    tracing_subscriber::registry().with(tracing_subscriber::fmt::layer()).with(filter).init();
 
     let args = Args::parse();
-
+    let server = Server::new("https://soroban-testnet.stellar.org");
     // Set up ethers provider.
     // let ws = Ws::connect(args.wss).await?;
     // let provider = Provider::new(ws);
@@ -77,21 +72,16 @@ async fn main() -> Result<()> {
     // });
 
     //set up stellar core ingestion config details
-    let network = match args.network {
-        0 => SupportedNetwork::Futurenet,
-        1 => SupportedNetwork::Pubnet,
-        2 => SupportedNetwork::Testnet,
-        _ => SupportedNetwork::Pubnet,
-    };
+    // let network = match args.network {
+    //     0 => SupportedNetwork::Futurenet,
+    //     1 => SupportedNetwork::Pubnet,
+    //     2 => SupportedNetwork::Testnet,
+    //     _ => SupportedNetwork::Pubnet,
+    // };
     let path = "/usr/local/bin/stellar-core".to_string();
 
     // Set up engine.
     let mut engine: Engine<Event, Action> = Engine::default();
-
-    // Set up block collector.
-    // let block_collector = Box::new(BlockCollector::new(provider.clone()));
-    // let block_collector = CollectorMap::new(block_collector, Event::NewBlock);
-    // engine.add_collector(Box::new(block_collector));
 
     // Set up opensea collector.
     // let opensea_collector = Box::new(OpenseaOrderCollector::new(args.opensea_api_key));
@@ -100,17 +90,40 @@ async fn main() -> Result<()> {
     // engine.add_collector(Box::new(opensea_collector));
 
     // Set up log collector
-    let log_collector = Box::new(LogCollector::new(network, path));
+    let log_collector = Box::new(
+        LogCollector::new(
+            "http://127.0.0.1:8000".to_string(),
+            vec![EventFilter {
+                event_type: EventType::Contract,
+                contract_ids: Some(
+                    vec![
+                        "CB34BESMYNFFXXZHJTVX5MNPOR7N7PPI2JPABGMD4NYR6RWVWOG2FUYH".to_string(),
+                        "CBTPEMBL2FPUNVREX6SY6SJ5PEZAXLQVQGDQWYJ6RBJBUZJG6YRTQCHH".to_string()
+                    ]
+                ),
+                topics: None,
+            }]
+        )
+    );
     let log_collector = CollectorMap::new(log_collector, |e| Event::SorobanEvents(Box::new(e)));
     engine.add_collector(Box::new(log_collector));
 
+    // Set up block collector.
+    let block_collector = Box::new(BlockCollector::new("http://127.0.0.1:8000".to_string()));
+    let block_collector = CollectorMap::new(block_collector, |e| Event::NewBlock(Box::new(e)));
+    engine.add_collector(Box::new(block_collector));
+
     // Set up opensea sudo arb strategy.
-    // let config = Config {
-    //     arb_contract_address: H160::from_str(&args.arb_contract_address)?,
-    //     bid_percentage: args.bid_percentage,
-    // };
-    // let strategy = OpenseaSudoArb::new(Arc::new(provider.clone()), opensea_client, config);
-    // engine.add_strategy(Box::new(strategy));
+    let config = Config {
+        pools: Vec::new(),
+        assets: Vec::new(),
+        bid_percentage: 10000000,
+        oracle_id: Default::default(),
+        us: Default::default(),
+        min_hf: 10000000,
+    };
+    let strategy = BlendLiquidator::new(config);
+    engine.add_strategy(Box::new(strategy));
 
     // Set up flashbots executor.
     // let executor = Box::new(MempoolExecutor::new(provider.clone()));

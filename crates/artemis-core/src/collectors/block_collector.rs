@@ -1,48 +1,47 @@
-use crate::types::{Collector, CollectorStream};
+use crate::types::{ Collector, CollectorStream };
 use anyhow::Result;
 use async_trait::async_trait;
-use ethers::{
-    prelude::Middleware,
-    providers::PubsubClient,
-    types::{H256, U64},
-};
-use std::sync::Arc;
-use tokio_stream::StreamExt;
+use tokio::sync::broadcast::{ self };
+use tokio_stream::{ wrappers::BroadcastStream, StreamExt };
+use soroban::server::{ Server };
+use core::time;
+use std::thread::sleep;
+// / A collector that listens for new blockchain event logs based on a [Filter](Filter),
+/// and generates a stream of [events](Log).
+pub struct BlockCollector {
+    client: Server,
+    last_block_num: u32,
+}
 
-/// A collector that listens for new blocks, and generates a stream of
-/// [events](NewBlock) which contain the block number and hash.
-pub struct BlockCollector<M> {
-    provider: Arc<M>,
+impl BlockCollector {
+    pub fn new(url: String) -> Self {
+        Self { client: Server::new(&url), last_block_num: 0 }
+    }
 }
 
 /// A new block event, containing the block number and hash.
 #[derive(Debug, Clone)]
 pub struct NewBlock {
-    pub hash: H256,
-    pub number: U64,
+    pub number: u32,
 }
-
-impl<M> BlockCollector<M> {
-    pub fn new(provider: Arc<M>) -> Self {
-        Self { provider }
-    }
-}
-
-/// Implementation of the [Collector](Collector) trait for the [BlockCollector](BlockCollector).
-/// This implementation uses the [PubsubClient](PubsubClient) to subscribe to new blocks.
 #[async_trait]
-impl<M> Collector<NewBlock> for BlockCollector<M>
-where
-    M: Middleware,
-    M::Provider: PubsubClient,
-    M::Error: 'static,
-{
-    async fn get_event_stream(&self) -> Result<CollectorStream<'_, NewBlock>> {
-        let stream = self.provider.subscribe_blocks().await?;
-        let stream = stream.filter_map(|block| match block.hash {
-            Some(hash) => block.number.map(|number| NewBlock { hash, number }),
-            None => None,
+impl Collector<NewBlock> for BlockCollector {
+    async fn get_event_stream(&mut self) -> Result<CollectorStream<'_, NewBlock>> {
+        let (sender, receiver) = broadcast::channel(500000);
+        let server = self.client.clone();
+        let mut last_block_num = self.last_block_num;
+        tokio::spawn(async move {
+            loop {
+                let result = server.get_latest_ledger().await.unwrap();
+                if result.sequence > last_block_num {
+                    last_block_num = result.sequence;
+                    let _ = sender.send(NewBlock { number: result.sequence });
+                }
+                sleep(time::Duration::from_secs(1));
+            }
         });
-        Ok(Box::pin(stream))
+        let stream = BroadcastStream::new(receiver);
+        let stream = stream.filter_map(|block| { Some(block.unwrap()) });
+        Ok(Box::pin(stream)) // don't specify this if I don't have to
     }
 }
