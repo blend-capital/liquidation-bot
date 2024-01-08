@@ -1,0 +1,6 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./crates/clients/soroban/Cargo.toml",
+        "./crates/clients/soroban/Cargo.toml"
+    ]
+}

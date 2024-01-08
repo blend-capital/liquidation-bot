@@ -2,7 +2,6 @@
 members = [
     "bin/artemis",
     "bin/cli",
-    "bin/ingestor_test",
     "crates/artemis-core",
     "crates/generator",
     "crates/strategies/*",
@@ -10,14 +9,11 @@ members = [
     "examples/*",
 ]
 
-default-members = ["bin/artemis", "bin/cli", "bin/ingestor_test"]
+default-members = ["bin/artemis", "bin/cli"]
 
 [workspace.dependencies]
 ## stellar
-ingest = "^0.0.3"
-soroban-client = "0.1.9"
-stellar-baselib = "0.2.5"
-stellar-xdr = { version = "20.0.0-rc1", default-features = true, features = [] }
+stellar-xdr = { version = "20.0.2", default-features = true, features = [] }
 
 ## eth
 ethers = { version = "2", features = ["ws", "rustls"]}
