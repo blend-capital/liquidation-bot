@@ -5,10 +5,9 @@ use std::pin::Pin;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 
-use crate::collectors::block_collector::NewBlock;
-use crate::collectors::opensea_order_collector::OpenseaOrder;
+// use crate::collectors::block_collector::NewBlock;
 use crate::executors::flashbots_executor::FlashbotsBundle;
-use crate::executors::soroban_executor::SubmitStellarTx;
+// use crate::executors::soroban_executor::SubmitStellarTx;
 
 /// A stream of events emitted by a [Collector](Collector).
 pub type CollectorStream<'a, E> = Pin<Box<dyn Stream<Item = E> + Send + 'a>>;
@@ -17,7 +16,7 @@ pub type CollectorStream<'a, E> = Pin<Box<dyn Stream<Item = E> + Send + 'a>>;
 #[async_trait]
 pub trait Collector<E>: Send + Sync {
     /// Returns the core event stream for the collector.
-    async fn get_event_stream(&self) -> Result<CollectorStream<'_, E>>;
+    async fn get_event_stream(&mut self) -> Result<CollectorStream<'_, E>>;
 }
 
 /// Strategy trait, which defines the core logic for each opportunity.
@@ -51,13 +50,14 @@ impl<E, F> CollectorMap<E, F> {
 }
 
 #[async_trait]
-impl<E1, E2, F> Collector<E2> for CollectorMap<E1, F>
-where
-    E1: Send + Sync + 'static,
-    E2: Send + Sync + 'static,
-    F: Fn(E1) -> E2 + Send + Sync + Clone + 'static,
+impl<E1, E2, F> Collector<E2>
+    for CollectorMap<E1, F>
+    where
+        E1: Send + Sync + 'static,
+        E2: Send + Sync + 'static,
+        F: Fn(E1) -> E2 + Send + Sync + Clone + 'static
 {
-    async fn get_event_stream(&self) -> Result<CollectorStream<'_, E2>> {
+    async fn get_event_stream(&mut self) -> Result<CollectorStream<'_, E2>> {
         let stream = self.collector.get_event_stream().await?;
         let f = self.f.clone();
         let stream = stream.map(f);
@@ -79,11 +79,12 @@ impl<A, F> ExecutorMap<A, F> {
 }
 
 #[async_trait]
-impl<A1, A2, F> Executor<A1> for ExecutorMap<A2, F>
-where
-    A1: Send + Sync + 'static,
-    A2: Send + Sync + 'static,
-    F: Fn(A1) -> Option<A2> + Send + Sync + Clone + 'static,
+impl<A1, A2, F> Executor<A1>
+    for ExecutorMap<A2, F>
+    where
+        A1: Send + Sync + 'static,
+        A2: Send + Sync + 'static,
+        F: Fn(A1) -> Option<A2> + Send + Sync + Clone + 'static
 {
     async fn execute(&self, action: A1) -> Result<()> {
         let action = (self.f)(action);
@@ -92,17 +93,4 @@ where
             None => Ok(()),
         }
     }
-}
-
-/// Convenience enum containing all the events that can be emitted by collectors.
-pub enum Events {
-    NewBlock(NewBlock),
-    Transaction(Transaction),
-    OpenseaOrder(Box<OpenseaOrder>),
-}
-
-/// Convenience enum containing all the actions that can be executed by executors.
-pub enum Actions {
-    FlashbotsBundle(FlashbotsBundle),
-    SubmitStellarTx(SubmitStellarTx),
 }

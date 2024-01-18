@@ -8,13 +8,13 @@ edition = "2021"
 [dependencies]
 
 ## stellar
-ingest = "^0.0.3"
-stellar-xdr = { version = "20.0.0-rc1", features = ["std", "curr", "next", "base64", "serde"] }
-soroban-client = "0.1.9"
+stellar-xdr = { version = "20.0.2", features = ["std", "curr", "next", "base64", "serde"] }
+soroban-cli = "20.1.1"
+ed25519-dalek = "=2.0.0"
 
 
 ## eth
-ethers.workspace = true
+ethers = {workspace = true}
 opensea-stream = { git = "https://github.com/FrankieIsLost/opensea-stream-rs"}
 mev-share = "0.1.4"
 ethers-flashbots = { git = "https://github.com/FrankieIsLost/ethers-flashbots", features = ["rustls"] }

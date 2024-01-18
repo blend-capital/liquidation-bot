@@ -64,3 +64,6 @@ where `ARB_CONTRACT_ADDRESS` is the address to which you deploy the [arb contrac
 
 
 [tg-url]: https://t.me/artemis_devs
+
+
+docker run -p 8001:8001 -p 8000:8000 -v /home/ryang/dev/soroban-rpc/config:/config stellar/soroban-rpc --config-path /config/soroban-rpc-config.toml

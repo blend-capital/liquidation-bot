@@ -1,21 +1,19 @@
 use std::collections::HashMap;
 
 use artemis_core::{
-    collectors::{block_collector::NewBlock, opensea_order_collector::OpenseaOrder},
+    collectors::block_collector::NewBlock,
     executors::soroban_executor::SubmitStellarTx,
 };
-use opensea_v2::types::{
-    FulfillListingRequest, FulfillListingResponse, Fulfiller, Listing, ProtocolVersion,
-};
-// use soroban_client::xdr;
-use stellar_baselib::soroban_data_builder::SorobanDataBuilder;
-use stellar_xdr::next::{ContractEvent, Hash, ReadXdr, ScAddress, ScVal, VecM};
 
+use stellar_strkey::Strkey;
+
+use stellar_xdr::curr::Hash;
+use soroban_cli::rpc::Event as SorobanEvent;
 /// Core Event enum for the current strategy.
 #[derive(Debug, Clone)]
 pub enum Event {
-    SorobanEvents(Box<VecM<ContractEvent>>),
-    NewBlock(NewBlock),
+    SorobanEvents(Box<SorobanEvent>),
+    NewBlock(Box<NewBlock>),
 }
 
 /// Core Action enum for the current strategy.
@@ -27,36 +25,43 @@ pub enum Action {
 /// Configuration for variables we need to pass to the strategy.
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub rpc_url: String,
     pub pools: Vec<Hash>,
     pub assets: Vec<Hash>,
     pub bid_percentage: u64,
     pub oracle_id: Hash,
-    pub us: Hash,
+    pub us: String,
     pub min_hf: i128,
 }
 #[derive(Debug, Clone)]
 pub struct PendingFill {
     pub pool: Hash,
-    pub user: String,
+    pub user: Hash,
     pub collateral: HashMap<Hash, i128>,
     pub liabilities: HashMap<Hash, i128>,
     pub pct_filled: u64,
-    pub target_block: u64,
+    pub target_block: u32,
     pub interest_auction: bool,
 }
 #[derive(Debug, Clone)]
-
 pub struct UserPositions {
     pub collateral: HashMap<Hash, i128>,
     pub liabilities: HashMap<Hash, i128>,
 }
 #[derive(Debug, Clone)]
-
 pub struct ReserveConfig {
-    pub liability_factor: i128,
-    pub collateral_factor: i128,
+    pub index: u32,
+    pub liability_factor: u32,
+    pub collateral_factor: u32,
     pub est_b_rate: i128,
     pub est_d_rate: i128,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuctionData {
+    pub collateral: HashMap<Hash, i128>,
+    pub liabilities: HashMap<Hash, i128>,
+    pub block: u32,
 }
 
 // /// Convenience function to convert a hash to a fulfill listing request
