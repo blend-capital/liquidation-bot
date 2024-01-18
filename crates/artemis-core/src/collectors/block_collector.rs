@@ -3,19 +3,19 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::broadcast::{ self };
 use tokio_stream::{ wrappers::BroadcastStream, StreamExt };
-use soroban::server::{ Server };
 use core::time;
 use std::thread::sleep;
+use soroban_cli::rpc::Client;
 // / A collector that listens for new blockchain event logs based on a [Filter](Filter),
 /// and generates a stream of [events](Log).
 pub struct BlockCollector {
-    client: Server,
+    network_url: String,
     last_block_num: u32,
 }
 
 impl BlockCollector {
     pub fn new(url: String) -> Self {
-        Self { client: Server::new(&url), last_block_num: 0 }
+        Self { network_url: url, last_block_num: 0 }
     }
 }
 
@@ -28,9 +28,10 @@ pub struct NewBlock {
 impl Collector<NewBlock> for BlockCollector {
     async fn get_event_stream(&mut self) -> Result<CollectorStream<'_, NewBlock>> {
         let (sender, receiver) = broadcast::channel(500000);
-        let server = self.client.clone();
         let mut last_block_num = self.last_block_num;
+        let url = self.network_url.clone();
         tokio::spawn(async move {
+            let server = Client::new(&url).unwrap();
             loop {
                 let result = server.get_latest_ledger().await.unwrap();
                 if result.sequence > last_block_num {

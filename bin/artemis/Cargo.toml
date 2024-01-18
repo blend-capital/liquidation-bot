@@ -21,4 +21,5 @@ tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 clap = { version = "4.2.5", features = ["derive"] }
 stellar-xdr = {workspace = true}
-soroban = {path = "../../crates/clients/soroban"}
+soroban-cli = "20.1.1"
+stellar-strkey = "0.0.7"
