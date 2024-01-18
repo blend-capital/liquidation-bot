@@ -16,6 +16,7 @@ pub struct BlockCollector {
 impl BlockCollector {
     pub fn new(url: String) -> Self {
         Self { network_url: url, last_block_num: 0 }
+
     }
 }
 
@@ -32,6 +33,7 @@ impl Collector<NewBlock> for BlockCollector {
         let url = self.network_url.clone();
         tokio::spawn(async move {
             let server = Client::new(&url).unwrap();
+
             loop {
                 let result = server.get_latest_ledger().await.unwrap();
                 if result.sequence > last_block_num {

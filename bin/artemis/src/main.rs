@@ -17,6 +17,7 @@ use tracing_subscriber::{ filter, prelude::* };
 use artemis_core::engine::Engine;
 use artemis_core::types::{ CollectorMap, ExecutorMap };
 use soroban_cli::utils::contract_id_from_str;
+
 /// CLI Options.
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -68,6 +69,7 @@ async fn main() -> Result<()> {
             ],
             topics: vec![],
         })
+
     );
     let log_collector = CollectorMap::new(log_collector, |e| Event::SorobanEvents(Box::new(e)));
     engine.add_collector(Box::new(log_collector));
@@ -76,6 +78,7 @@ async fn main() -> Result<()> {
     let block_collector = Box::new(
         BlockCollector::new("https://rpc-futurenet.stellar.org".to_string())
     );
+
     let block_collector = CollectorMap::new(block_collector, |e| Event::NewBlock(Box::new(e)));
     engine.add_collector(Box::new(block_collector));
 
