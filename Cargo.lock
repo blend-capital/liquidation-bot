@@ -161,7 +161,6 @@ dependencies = [
  "opensea-v2",
  "soroban-cli",
  "stellar-strkey 0.0.7",
-
  "stellar-xdr",
  "tokio",
  "tracing",
@@ -2750,7 +2749,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "gloo-net",
- "http",
+ "http 0.2.9",
  "jsonrpsee-core 0.18.2",
  "pin-project",
  "rustls-native-certs",
@@ -4754,6 +4753,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban"
+version = "0.1.0"
+dependencies = [
+ "http 1.0.0",
+ "reqwest",
+ "serde",
+ "serde-aux",
+ "serde_derive",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "soroban-builtin-sdk-macros"
 version = "20.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4784,7 +4796,7 @@ dependencies = [
  "ethnum",
  "heck",
  "hex",
- "http",
+ "http 0.2.9",
  "hyper",
  "hyper-tls",
  "itertools 0.10.5",

@@ -1,12 +1,18 @@
-use std::{ ops::{ Div, Mul }, sync::Arc };
+use std::{
+    ops::{Div, Mul},
+    sync::Arc,
+};
 
 use crate::types::Executor;
-use anyhow::{ Context, Result };
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use ethers::{ providers::Middleware, types::{ transaction::eip2718::TypedTransaction, U256 } };
-use soroban_cli::rpc::{ Client, self };
-use ed25519_dalek::{ SigningKey, SecretKey };
-use stellar_xdr::curr::{ Transaction, Hash };
+use ed25519_dalek::{SecretKey, SigningKey};
+use ethers::{
+    providers::Middleware,
+    types::{transaction::eip2718::TypedTransaction, U256},
+};
+use soroban_cli::rpc::{self, Client};
+use stellar_xdr::curr::{Hash, Transaction};
 /// An executor that sends transactions to the mempool.
 pub struct SorobanExecutor {
     // client: soroban_client::server::Server,
@@ -48,20 +54,19 @@ impl SorobanExecutor {
 //     /// Send a transaction to the mempool.
 //     async fn execute(&self, mut action: SubmitStellarTx) -> Result<()> {
 //         //TODO handle gas estimate here
-//         let sim: soroban_client::soroban_rpc::soroban_rpc::SimulateTransactionResponse = self.client.simulate_transaction(
-//             action.tx.clone()
-//         ).await?;
-//         let mut prepped_tx = soroban_client::transaction
-//             ::assemble_transaction(
-//                 action.tx.clone(),
-//                 &self.network_passphrase,
-//                 SimulationResponse::Normal(sim)
-//             )
-//             .unwrap()
-//             .build();
-//         prepped_tx.sign(
-//             &[soroban_client::keypair::Keypair::from_secret(action.private_key.as_str()).unwrap()]
-//         );
+//         let sim: soroban_client::soroban_rpc::soroban_rpc::SimulateTransactionResponse =
+//             self.client.simulate_transaction(action.tx.clone()).await?;
+//         let mut prepped_tx = soroban_client::transaction::assemble_transaction(
+//             action.tx.clone(),
+//             &self.network_passphrase,
+//             SimulationResponse::Normal(sim),
+//         )
+//         .unwrap()
+//         .build();
+//         prepped_tx
+//             .sign(&[
+//                 soroban_client::keypair::Keypair::from_secret(action.private_key.as_str()).unwrap(),
+//             ]);
 
 //         let resp = self.client.send_transaction(prepped_tx);
 

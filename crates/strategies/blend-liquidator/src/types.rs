@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 
 use artemis_core::{
-    collectors::block_collector::NewBlock,
-    executors::soroban_executor::SubmitStellarTx,
+    collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
 };
 
 use stellar_strkey::Strkey;
 
-use stellar_xdr::curr::Hash;
 use soroban_cli::rpc::Event as SorobanEvent;
+use stellar_xdr::curr::Hash;
 /// Core Event enum for the current strategy.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -32,6 +31,7 @@ pub struct Config {
     pub oracle_id: Hash,
     pub us: String,
     pub min_hf: i128,
+    pub required_profit: i128,
 }
 #[derive(Debug, Clone)]
 pub struct PendingFill {
@@ -41,13 +41,14 @@ pub struct PendingFill {
     pub liabilities: HashMap<Hash, i128>,
     pub pct_filled: u64,
     pub target_block: u32,
-    pub interest_auction: bool,
+    pub auction_type: u8,
 }
 #[derive(Debug, Clone)]
 pub struct UserPositions {
     pub collateral: HashMap<Hash, i128>,
     pub liabilities: HashMap<Hash, i128>,
 }
+
 #[derive(Debug, Clone)]
 pub struct ReserveConfig {
     pub index: u32,
@@ -59,8 +60,8 @@ pub struct ReserveConfig {
 
 #[derive(Debug, Clone)]
 pub struct AuctionData {
-    pub collateral: HashMap<Hash, i128>,
-    pub liabilities: HashMap<Hash, i128>,
+    pub bid: HashMap<Hash, i128>, //liabilities || backstop_token || bad_debt
+    pub lot: HashMap<Hash, i128>, //collateral || interest || bad_debt
     pub block: u32,
 }
 
