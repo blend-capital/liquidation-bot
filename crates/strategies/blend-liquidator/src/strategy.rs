@@ -1,17 +1,16 @@
 use artemis_core::collectors::block_collector::NewBlock;
 use artemis_core::executors::soroban_executor::SubmitStellarTx;
 use async_trait::async_trait;
-use ed25519_dalek::ed25519::signature::Keypair;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::vec;
+use stellar_strkey::{ed25519::PublicKey as Ed25519PublicKey, Strkey};
 
 use crate::auction_manager::OngoingAuction;
 use crate::constants::FACTORY_DEPLOYMENT_BLOCK;
 use crate::helper::{
-    decode_auction_data, decode_scaddress_to_hash, reserve_config_from_ledger_entry,
-    reserve_data_from_ledger_entry, sum_adj_asset_values, user_positions_from_ledger_entry,
+    decode_auction_data, decode_scaddress_to_hash, evaluate_user, reserve_config_from_ledger_entry,
+    reserve_data_from_ledger_entry, user_positions_from_ledger_entry,
 };
 use crate::transaction_builder::{BlendTxBuilder, Request};
 use ed25519_dalek::SigningKey;
@@ -25,26 +24,23 @@ use stellar_xdr::curr::{
 };
 use tracing::info;
 
-use crate::types::{AuctionData, Config, ReserveConfig, UserPositions};
-use anyhow::Result;
-// use artemis_core::collectors::block_collector::NewBlock;
-// use artemis_core::executors::soroban_executor::{ GasBidInfo, SubmitStellarTx };
 use super::helper::decode_entry_key;
-use super::types::{Action, Event, PendingFill};
+use super::types::{Action, Event};
+use crate::types::{Config, ReserveConfig, UserPositions};
+use anyhow::Result;
 use artemis_core::types::Strategy;
 use soroban_cli::rpc::{Client, Event as SorobanEvent};
 pub struct BlendLiquidator {
     /// Soroban RPC client for interacting with chain
     rpc: Client,
-
-    /// The network url
-    network_url: String,
     /// Assets we're interested in
     assets: Vec<Hash>,
     /// Map Assets to bid on and their prices - TODO: update this to take into account slippage
     asset_prices: HashMap<Hash, i128>,
     /// Vec of Blend pool addresses to bid on auctions in
     pools: Vec<Hash>,
+    /// Backstop ID
+    backstop_id: Hash,
     /// Oracle ID for getting asset prices
     oracle_id: Hash,
     /// Amount of profits to bid in gas
@@ -53,11 +49,16 @@ pub struct BlendLiquidator {
     required_profit: i128,
     /// Pending auction fills
     pending_fill: Vec<OngoingAuction>,
-    /// Map of users and their positions in pools - only stores users with health factor < 2
-    /// HashMap<UserId, HashMap<PoolId, UserPositions>>
-    users: HashMap<Hash, HashMap<Hash, UserPositions>>,
+    /// All protocol users
+    all_user: Vec<Hash>,
+    /// Map pool users and their positions
+    /// - only stores users with health factor < 5
+    /// - only stores users with relevant assets
+    /// HashMap<PoolId, HashMap<UserId, UserPositions>>
+    users: Box<HashMap<Hash, HashMap<Hash, UserPositions>>>,
     /// Map of pools and their reserve configurations
-    reserve_configs: HashMap<Hash, HashMap<Hash, ReserveConfig>>,
+    /// HashMap<PoolId,HasMap<AssetId, ReserveConfig>>
+    reserve_configs: Box<HashMap<Hash, HashMap<Hash, ReserveConfig>>>,
     /// Our positions
     bankroll: HashMap<Hash, UserPositions>,
     /// Our wallet
@@ -66,6 +67,8 @@ pub struct BlendLiquidator {
     us: SigningKey,
     /// Our public key
     us_public: Hash,
+    /// Our sequence number
+    sequence_num: i64,
     // Our minimum health factor
     min_hf: i128,
     // Backstop token address
@@ -73,23 +76,26 @@ pub struct BlendLiquidator {
 }
 
 impl BlendLiquidator {
-    pub fn new(config: Config) -> Self {
+    pub async fn new(config: Config) -> Self {
         Self {
             rpc: Client::new(config.rpc_url.as_str()).unwrap(),
-            network_url: config.rpc_url,
             assets: config.assets,
             asset_prices: HashMap::new(),
             pools: config.pools,
+            backstop_id: Hash::from_str("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")
+                .unwrap(), //TODO replace with real address
             oracle_id: config.oracle_id,
             bid_percentage: config.bid_percentage,
             required_profit: config.required_profit,
             pending_fill: vec![],
-            users: HashMap::new(),
-            reserve_configs: HashMap::new(),
+            all_user: vec![], //TODO decide where we're getting this list from
+            users: Box::new(HashMap::new()),
+            reserve_configs: Box::new(HashMap::new()),
             bankroll: HashMap::new(),
             wallet: HashMap::new(),
             us: SigningKey::from_bytes(&PrivateKey::from_string(&config.us).unwrap().0),
             us_public: Hash::from_str(&config.us).unwrap(),
+            sequence_num: 0,
             min_hf: config.min_hf,
             backstop_token_address: Hash::from_str(
                 "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
@@ -105,8 +111,19 @@ impl Strategy<Event, Action> for BlendLiquidator {
     async fn sync_state(&mut self) -> Result<()> {
         // // Block in which the pool factory was deployed.
         let start_block = FACTORY_DEPLOYMENT_BLOCK;
-
         let current_block = self.rpc.get_latest_ledger().await?;
+
+        //get sequence num
+        self.sequence_num = self
+            .rpc
+            .get_account(
+                &Strkey::PublicKeyEd25519(Ed25519PublicKey(self.us.verifying_key().to_bytes()))
+                    .to_string(),
+            )
+            .await
+            .unwrap()
+            .seq_num
+            .into();
 
         // Get all asset prices
         self.get_asset_prices(self.assets.clone()).await?;
@@ -114,17 +131,26 @@ impl Strategy<Event, Action> for BlendLiquidator {
         // Get reserve configs for given pools
         self.get_reserve_config(self.assets.clone()).await;
 
-        // Get user positions in given pools - also fill in our positions
-        //TODO: decide if loading all user positions in one call is needed.
-        self.get_user_position(
-            self.pools[0].clone(),
-            Hash(self.us.verifying_key().to_bytes()),
-        )
-        .await?;
-        info!(
-            "done syncing state, found available pools for {} collections",
-            self.pools.len()
-        );
+        for pool in self.pools.clone() {
+            // Get our positions
+            self.get_user_position(pool.clone(), self.us_public.clone())
+                .await?;
+            // Get all users
+            for user in self.all_user.clone() {
+                self.get_user_position(pool.clone(), user.clone()).await?;
+            }
+        }
+
+        info!("done syncing state");
+        for pool in self.pools.iter() {
+            let user_count = self.users.get(pool).unwrap().len();
+            let pool_str = pool.to_string();
+            info!(
+                "found {:?} relevant users for pool {:?}",
+                user_count, pool_str
+            );
+        }
+
         Ok(())
     }
 
@@ -135,10 +161,9 @@ impl Strategy<Event, Action> for BlendLiquidator {
         match event {
             Event::SorobanEvents(events) => {
                 let events = *events;
-                if let Some(action) = self.process_soroban_events(events).await {}
+                self.process_soroban_events(events, &mut actions).await;
             }
             Event::NewBlock(block) => {
-                //TODO decide whether we need to execute a pending auction
                 self.process_new_block_event(*block, &mut actions).await;
             }
         }
@@ -148,9 +173,11 @@ impl Strategy<Event, Action> for BlendLiquidator {
 
 impl BlendLiquidator {
     // Process new orders as they come in.
-    async fn process_soroban_events(&mut self, event: SorobanEvent) -> Option<Vec<Action>> {
-        let mut actions: Vec<Action> = Vec::default();
-
+    async fn process_soroban_events(
+        &mut self,
+        event: SorobanEvent,
+        actions: &mut Vec<Action>,
+    ) -> Option<Vec<Action>> {
         //should build pending auctions and remove or modify pending auctions that are filled or partially filled by someone else
         let pool_id = Hash(contract_id_from_str(&event.contract_id).unwrap());
         let mut name: String = Default::default();
@@ -172,19 +199,8 @@ impl BlendLiquidator {
                 );
 
                 let auction_data = decode_auction_data(data);
-                // Check if assets being auctioned are in available assets - TODO: there should be a dust filter here at some point
-                let mut valid_assets = true;
-                for asset in auction_data.lot.keys() {
-                    if !self.assets.contains(asset) {
-                        valid_assets = false;
-                    }
-                }
-                for asset in auction_data.bid.keys() {
-                    if !self.assets.contains(asset) {
-                        valid_assets = false;
-                    }
-                }
-                if valid_assets {
+
+                if self.validate_assets(auction_data.lot.clone(), auction_data.bid.clone()) {
                     let mut pending_fill = OngoingAuction::new(
                         pool_id.clone(),
                         user.clone(),
@@ -200,6 +216,8 @@ impl BlendLiquidator {
                         self.min_hf,
                     );
                     self.pending_fill.push(pending_fill);
+                    // remove user from users list since they are being liquidated
+                    self.users.entry(pool_id.clone()).or_default().remove(&user);
                 }
             }
             "delete_liquidation_auction" => {
@@ -209,7 +227,11 @@ impl BlendLiquidator {
                 );
                 for (index, pending_fill) in self.pending_fill.clone().iter().enumerate() {
                     if pending_fill.user.0 == user.0 {
-                        let _ = &self.pending_fill.remove(index);
+                        self.pending_fill.remove(index);
+                        // add user back to users
+                        self.get_user_position(pool_id.clone(), user.clone())
+                            .await
+                            .unwrap();
                     }
                 }
             }
@@ -223,22 +245,10 @@ impl BlendLiquidator {
                 }
                 let auction_data = decode_auction_data(data);
 
-                //Check if auctioned assets are in available assets
-                let mut valid_assets = true;
-                for asset in auction_data.lot.keys() {
-                    if !self.assets.contains(asset) {
-                        valid_assets = false;
-                    }
-                }
-                for asset in auction_data.bid.keys() {
-                    if !self.assets.contains(asset) {
-                        valid_assets = false;
-                    }
-                }
-                if valid_assets {
+                if self.validate_assets(auction_data.lot.clone(), auction_data.bid.clone()) {
                     let mut pending_fill = OngoingAuction::new(
                         pool_id.clone(),
-                        Hash([0; 32]),
+                        Hash([0; 32]), //TODO: backstop contract address needs to go here
                         auction_data.clone(),
                         auction_type,
                         self.min_hf,
@@ -263,6 +273,7 @@ impl BlendLiquidator {
                                 .clone(),
                         )
                     }
+                    self.pending_fill.push(pending_fill);
                 }
             }
             "fill_auction" => {
@@ -291,25 +302,75 @@ impl BlendLiquidator {
                     _ => 0,
                 };
 
-                for (index, pending_fill) in self.pending_fill.clone().iter().enumerate() {
+                let liquidator_id: Hash = match &data {
+                    ScVal::Vec(vec) => {
+                        if let Some(vec) = vec {
+                            let id = vec.clone().get(0).unwrap().to_owned();
+                            decode_scaddress_to_hash(&id)
+                        } else {
+                            Hash([0; 32])
+                        }
+                    }
+                    _ => Hash([0; 32]),
+                };
+                // if we filled update our bankroll
+                if liquidator_id.0 == self.us_public.0 {
+                    self.get_user_position(pool_id.clone(), self.us_public.clone())
+                        .await
+                        .unwrap();
+                }
+
+                for (index, pending_fill) in self.pending_fill.clone().iter_mut().enumerate() {
                     if pending_fill.user == liquidated_id
                         && pending_fill.pool == pool_id
                         && pending_fill.auction_type == auction_type
                     {
                         if fill_percentage == 100 {
                             self.pending_fill.remove(index);
-                            // TODO: If fill was a user liquidation auction and was filled more than 200 blocks after the start block, check if the user has any remaining collateral, if not move bad debt to backstop and start a bad debt auction
-                        } else {
-                            //Update pct_filled for pending fill
-                            let old_pct_filled = pending_fill.pct_filled;
-                            self.pending_fill[index].pct_filled = old_pct_filled
-                                + (100 - old_pct_filled) * (fill_percentage as u64) / 100;
 
-                            //Update pct_to_fill for pending fill
-                            let old_pct_to_fill = pending_fill.pct_to_fill;
-                            self.pending_fill[index].pct_to_fill =
-                                old_pct_to_fill * 100 / (100 - fill_percentage as u64);
+                            // add user back to positions
+                            self.get_user_position(pool_id.clone(), liquidated_id.clone())
+                                .await
+                                .unwrap();
+                            //check if a bad debt call is necessary
+                            let current_block =
+                                self.rpc.get_latest_ledger().await.unwrap().sequence;
+
+                            if self
+                                .users
+                                .get(&pool_id)
+                                .unwrap()
+                                .get(&liquidated_id)
+                                .is_none()
+                                && auction_type == 0
+                                && current_block - pending_fill.auction_data.block > 200
+                            {
+                                // Code to execute if the value is None
+                                self.sequence_num += 1;
+                                let tx_builder = BlendTxBuilder {
+                                    contract_id: pool_id.clone(),
+                                    signing_key: self.us.clone(),
+                                };
+                                actions.push(Action::SubmitTx(SubmitStellarTx {
+                                    tx: tx_builder
+                                        .bad_debt(self.sequence_num, liquidated_id.clone())
+                                        .unwrap(),
+                                    gas_bid_info: None,
+                                    signing_key: self.us.clone(),
+                                }));
+                                self.sequence_num += 1;
+                                actions.push(Action::SubmitTx(SubmitStellarTx {
+                                    tx: tx_builder
+                                        .new_auction(self.sequence_num, self.backstop_id.clone(), 1)
+                                        .unwrap(),
+                                    gas_bid_info: None,
+                                    signing_key: self.us.clone(),
+                                }));
+                            }
+                        } else {
+                            pending_fill.partial_fill_update(fill_percentage as u64);
                         }
+                        break;
                     }
                 }
             }
@@ -448,21 +509,9 @@ impl BlendLiquidator {
                     supply_amount,
                     b_tokens_minted
                 );
+                self.update_user(&pool_id, &user, &asset_id, b_tokens_minted, true)
+                    .await;
 
-                // Update user's collateral position
-                let balance = self
-                    .users
-                    .entry(user.clone())
-                    .or_default()
-                    .entry(pool_id.clone())
-                    .or_insert(UserPositions {
-                        collateral: Default::default(),
-                        liabilities: Default::default(),
-                    })
-                    .collateral
-                    .entry(asset_id.clone())
-                    .or_insert(0);
-                *balance += b_tokens_minted;
                 // Update reserve's estimated b rate by using request.amount/b_tokens_minted from the emitted event
                 self.update_rate(pool_id, asset_id, supply_amount, b_tokens_minted, true)
             }
@@ -510,19 +559,9 @@ impl BlendLiquidator {
                     asset_id, user, withdraw_amount, b_tokens_burned
                 );
                 // Update users collateral positions
-                let balance = self
-                    .users
-                    .entry(user.clone())
-                    .or_default()
-                    .entry(pool_id.clone())
-                    .or_insert(UserPositions {
-                        collateral: Default::default(),
-                        liabilities: Default::default(),
-                    })
-                    .collateral
-                    .entry(asset_id.clone())
-                    .or_insert(0);
-                *balance -= b_tokens_burned;
+                self.update_user(&pool_id, &user, &asset_id, -b_tokens_burned, true)
+                    .await;
+
                 // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
                 self.reserve_configs
                     .entry(pool_id)
@@ -576,19 +615,9 @@ impl BlendLiquidator {
                     asset_id, user, borrow_amount, d_token_minted
                 );
                 // Update users liability positions
-                let balance = self
-                    .users
-                    .entry(user.clone())
-                    .or_default()
-                    .entry(pool_id.clone())
-                    .or_insert(UserPositions {
-                        collateral: Default::default(),
-                        liabilities: Default::default(),
-                    })
-                    .liabilities
-                    .entry(asset_id.clone())
-                    .or_insert(0);
-                *balance += d_token_minted;
+                self.update_user(&pool_id, &user, &asset_id, d_token_minted, false)
+                    .await;
+
                 // Update reserve estimated b rate by using request.amount/d tokens minted from the emitted event
                 self.update_rate(pool_id, asset_id, borrow_amount, d_token_minted, false)
             }
@@ -636,19 +665,8 @@ impl BlendLiquidator {
                     asset_id, user, repay_amount, d_token_burned
                 );
                 // Update users liability positions
-                let balance = self
-                    .users
-                    .entry(user.clone())
-                    .or_default()
-                    .entry(pool_id.clone())
-                    .or_insert(UserPositions {
-                        collateral: Default::default(),
-                        liabilities: Default::default(),
-                    })
-                    .liabilities
-                    .entry(asset_id.clone())
-                    .or_insert(0);
-                *balance -= d_token_burned;
+                self.update_user(&pool_id, &user, &asset_id, -d_token_burned, false)
+                    .await;
                 // Update reserve estimated d rate by using request.amount/d tokens burnt from the emitted event
                 self.update_rate(pool_id, asset_id, repay_amount, d_token_burned, false);
             }
@@ -658,7 +676,8 @@ impl BlendLiquidator {
                 let asset_id = decode_scaddress_to_hash(
                     &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
                 ); //TODO: placeholder
-                   // Check if we can liquidate anyone based on the new price
+
+                // recalculate auction profitability
                 for pending in self.pending_fill.iter_mut() {
                     let bids = pending.auction_data.bid.clone();
                     let lots = pending.auction_data.lot.clone();
@@ -690,29 +709,32 @@ impl BlendLiquidator {
                         }
                     }
                 }
+                // Check if we can liquidate anyone based on the new price
                 for pool_reserves in self.reserve_configs.iter() {
                     if pool_reserves.1.contains_key(&asset_id) {
                         for users in self.users.get(pool_reserves.0).iter_mut() {
                             for user in users.iter() {
-                                let score = self.evaluate_user(user.1, pool_reserves.1);
+                                let score =
+                                    evaluate_user(pool_reserves.1, &self.asset_prices, user.1);
                                 // create liquidation auction if needed
                                 if score > 1 {
-                                    let tx_builder = BlendTxBuilder {
-                                        rpc: Client::new(&self.network_url).unwrap(),
+                                    let op_builder = BlendTxBuilder {
+                                        contract_id: pool_reserves.0.clone(),
+                                        signing_key: self.us.clone(),
                                     };
                                     let liquidator_id = Hash(self.us.verifying_key().to_bytes());
-                                    let tx = tx_builder
+                                    self.sequence_num += 1;
+                                    let tx = op_builder
                                         .new_liquidation_auction(
-                                            pool_reserves.0.clone(),
+                                            self.sequence_num,
                                             liquidator_id,
                                             score,
-                                            self.us.clone(),
                                         )
-                                        .await
                                         .unwrap();
                                     actions.push(Action::SubmitTx(SubmitStellarTx {
                                         tx,
                                         gas_bid_info: None,
+                                        signing_key: self.us.clone(),
                                     }));
                                 }
                             }
@@ -734,16 +756,18 @@ impl BlendLiquidator {
         event: NewBlock,
         actions: &mut Vec<Action>,
     ) -> Option<Vec<Action>> {
-        let tx_builder = BlendTxBuilder {
-            rpc: Client::new(&self.network_url).unwrap(),
-        };
         let liquidator_id = Hash(self.us.verifying_key().to_bytes());
         for pending in self.pending_fill.iter() {
+            let op_builder = BlendTxBuilder {
+                contract_id: pending.pool.clone(),
+                signing_key: self.us.clone(),
+            };
             if pending.target_block <= event.number {
                 // TODO: Create a fill tx
-                let tx = tx_builder
+                self.sequence_num += 1;
+                let tx = op_builder
                     .submit(
-                        pending.pool.clone(),
+                        self.sequence_num,
                         liquidator_id.clone(),
                         liquidator_id.clone(),
                         liquidator_id.clone(),
@@ -752,13 +776,12 @@ impl BlendLiquidator {
                             address: pending.user.clone(),
                             amount: 100,
                         }],
-                        self.us.clone(),
                     )
-                    .await
                     .unwrap();
                 actions.push(Action::SubmitTx(SubmitStellarTx {
                     tx,
                     gas_bid_info: None,
+                    signing_key: self.us.clone(),
                 }));
             }
         }
@@ -815,10 +838,31 @@ impl BlendLiquidator {
                         let user_position =
                             user_positions_from_ledger_entry(&value, &reserve_configs.to_owned());
                         println!("{:?}", user_position.clone());
-                        self.users
-                            .entry(user_id)
-                            .or_default()
-                            .insert(pool_id.clone(), user_position);
+                        if user_id == self.us_public {
+                            self.bankroll.insert(pool_id.clone(), user_position.clone());
+                        } else {
+                            let score = evaluate_user(
+                                self.reserve_configs.get(&pool_id).unwrap(),
+                                &self.asset_prices,
+                                &user_position,
+                            );
+                            if score < 1
+                                || !self.validate_assets(
+                                    user_position.collateral.clone(),
+                                    user_position.liabilities.clone(),
+                                )
+                            {
+                                self.users
+                                    .entry(pool_id.clone())
+                                    .or_default()
+                                    .remove(&user_id);
+                            } else {
+                                self.users
+                                    .entry(pool_id.clone())
+                                    .or_default()
+                                    .insert(user_id.clone(), user_position);
+                            }
+                        }
                     }
                     _ => (),
                 }
@@ -1012,45 +1056,48 @@ impl BlendLiquidator {
                 }
             });
     }
-
-    async fn update_user_positions(&mut self, pool: Hash) {
-        //TODO
-        // we need to use the client to grab all users and store their positions - also needs to recognize us and store our position data in the bankroll
+    // validates assets in two hashmaps of assets and amounts - common pattern
+    fn validate_assets(&self, asset1: HashMap<Hash, i128>, asset2: HashMap<Hash, i128>) -> bool {
+        for asset in asset1.keys().chain(asset2.keys()) {
+            if self.assets.contains(asset) {
+                return false;
+            }
+        }
+        return true;
     }
 
-    // returns 0 if user should be ignored, 1 if user should be watched, a pct if user should be liquidated for the given pct
-    fn evaluate_user(
-        &self,
-        user_positions: &UserPositions,
-        pool_reserves: &HashMap<Hash, ReserveConfig>,
-    ) -> u64 {
-        let (collateral_value, adj_collateral_value) = sum_adj_asset_values(
-            user_positions.collateral.clone(),
-            &pool_reserves,
-            &self.asset_prices,
-            true,
-        );
-        let (liabilities_value, adj_liabilities_value) = sum_adj_asset_values(
-            user_positions.liabilities.clone(),
-            &pool_reserves,
-            &self.asset_prices,
-            false,
-        );
-        let remaining_power = adj_collateral_value - adj_liabilities_value;
-        if remaining_power > adj_liabilities_value * 5 {
-            // user's HF is over 5 so we ignore them// TODO: this might not be large enough
-            return 0;
-        } else if remaining_power > 0 {
-            return 1;
-        } else {
-            const SCL_7: i128 = 1e7 as i128;
-            let inv_lf = adj_liabilities_value * SCL_7 / liabilities_value;
-            let cf = adj_collateral_value * SCL_7 / collateral_value;
-            let numerator = adj_collateral_value * 1_100_0000 / SCL_7 - adj_liabilities_value;
-            let est_incentive = SCL_7 + (SCL_7 - cf * SCL_7 / inv_lf / 2);
-            let denominator = inv_lf * 1_100_0000 / SCL_7 - cf * est_incentive / SCL_7;
-            let pct = numerator * SCL_7 / denominator * 100 / adj_liabilities_value;
-            return if pct > 100 { 100 } else { pct as u64 };
+    async fn update_user(
+        &mut self,
+        pool_id: &Hash,
+        user_id: &Hash,
+        asset_id: &Hash,
+        amount: i128,
+        collateral: bool,
+    ) {
+        if let Some(positions) = self.users.get_mut(&pool_id).unwrap().get_mut(&user_id) {
+            if collateral {
+                let balance = positions.collateral.entry(asset_id.clone()).or_insert(0);
+                *balance += amount;
+            } else {
+                let balance = positions.liabilities.entry(asset_id.clone()).or_insert(0);
+                *balance += amount;
+            }
+            // User's borrowing power is going up so we need to potentially drop them
+            if ((collateral && amount > 0) || (!collateral && amount < 0))
+                && (evaluate_user(
+                    &self.reserve_configs.get(&pool_id).unwrap(),
+                    &self.asset_prices,
+                    &positions,
+                ) < 1
+                    || !self.assets.contains(asset_id))
+            {
+                self.users.get_mut(&pool_id).unwrap().remove(&user_id);
+            }
+        } else if (collateral && amount < 0) || (!collateral && amount > 0) {
+            // User's borrowing power is going down so we should potentially add them
+            self.get_user_position(pool_id.clone(), user_id.clone())
+                .await
+                .unwrap();
         }
     }
 }

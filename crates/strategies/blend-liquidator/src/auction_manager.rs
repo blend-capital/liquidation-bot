@@ -135,6 +135,15 @@ impl OngoingAuction {
             max_delta,
         )
     }
+    pub fn partial_fill_update(&mut self, fill_percentage: u64) {
+        //Update pct_filled for pending fill
+        let old_pct_filled = self.pct_filled.clone();
+        self.pct_filled = old_pct_filled + (100 - old_pct_filled) * (fill_percentage as u64) / 100;
+
+        //Update pct_to_fill for pending fill
+        let old_pct_to_fill = self.pct_to_fill.clone();
+        self.pct_to_fill = old_pct_to_fill * 100 / (100 - fill_percentage as u64);
+    }
     // returns (target block,percent to fill)
     //TODO: once price quoter supports liquidity considerations this the percent_fill should influence that bid_block since a smaller fill lowers liquidity requirements
     fn set_percent_and_target(

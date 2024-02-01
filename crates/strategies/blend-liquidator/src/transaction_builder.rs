@@ -10,7 +10,8 @@ use stellar_xdr::curr::{
     ScSymbol, ScVal, ScVec, Transaction, Uint256, VecM,
 };
 pub struct BlendTxBuilder {
-    pub rpc: Client,
+    pub contract_id: Hash,
+    pub signing_key: SigningKey,
 }
 
 pub struct Request {
@@ -20,21 +21,20 @@ pub struct Request {
 }
 
 impl BlendTxBuilder {
-    pub async fn submit(
+    pub fn submit(
         &self,
-        pool_id: Hash,
+        sequence: i64,
         from: Hash,
         to: Hash,
         spender: Hash,
         requests: Vec<Request>,
-        signing_key: SigningKey,
-    ) -> Result<Transaction, Error> {
+    ) -> Result<Transaction, ()> {
         let op = Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(pool_id),
+                        contract_address: ScAddress::Contract(self.contract_id.clone()),
                         function_name: ScSymbol::try_from("submit").unwrap(),
                         args: VecM::try_from(vec![
                             ScVal::Address(ScAddress::Account(AccountId(
@@ -54,40 +54,60 @@ impl BlendTxBuilder {
                 auth: VecM::default(),
             }),
         };
-        let account = self
-            .rpc
-            .get_account(
-                &Strkey::PublicKeyEd25519(Ed25519PublicKey(signing_key.verifying_key().to_bytes()))
-                    .to_string(),
-            )
-            .await
-            .unwrap();
-        let seq_num: i64 = account.seq_num.into();
-        let transaction: Transaction = Transaction {
-            source_account: MuxedAccount::Ed25519(Uint256(signing_key.verifying_key().to_bytes())),
+        Ok(Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256(
+                self.signing_key.verifying_key().to_bytes(),
+            )),
             fee: 10000,
-            seq_num: stellar_xdr::curr::SequenceNumber(seq_num + 1), //TODO: we might want to track this client size to remove the need for a account call and to allow us to submit multiple actions in one block
+            seq_num: stellar_xdr::curr::SequenceNumber(sequence),
             cond: Preconditions::None,
             memo: Memo::None,
             operations: vec![op].try_into()?,
             ext: stellar_xdr::curr::TransactionExt::V0,
-        };
-        return Ok(transaction);
+        })
     }
-
-    pub async fn new_auction(
-        &self,
-        pool_id: Hash,
-        user: Hash,
-        auction_type: u32,
-        signing_key: SigningKey,
-    ) -> Result<Transaction, Error> {
+    pub fn bad_debt(&self, sequence: i64, user: Hash) -> Result<Transaction, ()> {
         let op = Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(pool_id),
+                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        function_name: ScSymbol::try_from("bad_debt").unwrap(),
+                        args: VecM::try_from(vec![ScVal::Address(ScAddress::Account(AccountId(
+                            PublicKey::PublicKeyTypeEd25519(Uint256(user.0)),
+                        )))])
+                        .unwrap(),
+                    },
+                ),
+                auth: VecM::default(),
+            }),
+        };
+        Ok(Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256(
+                self.signing_key.verifying_key().to_bytes(),
+            )),
+            fee: 10000,
+            seq_num: stellar_xdr::curr::SequenceNumber(sequence),
+            cond: Preconditions::None,
+            memo: Memo::None,
+            operations: vec![op].try_into()?,
+            ext: stellar_xdr::curr::TransactionExt::V0,
+        })
+    }
+
+    pub fn new_auction(
+        &self,
+        sequence: i64,
+        user: Hash,
+        auction_type: u32,
+    ) -> Result<Transaction, ()> {
+        let op = Operation {
+            source_account: None,
+            body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: stellar_xdr::curr::HostFunction::InvokeContract(
+                    InvokeContractArgs {
+                        contract_address: ScAddress::Contract(self.contract_id.clone()),
                         function_name: ScSymbol::try_from("new_auction").unwrap(),
                         args: VecM::try_from(vec![
                             ScVal::U32(auction_type),
@@ -101,40 +121,39 @@ impl BlendTxBuilder {
                 auth: VecM::default(),
             }),
         };
-        let account = self
-            .rpc
-            .get_account(
-                &Strkey::PublicKeyEd25519(Ed25519PublicKey(signing_key.verifying_key().to_bytes()))
-                    .to_string(),
-            )
-            .await
-            .unwrap();
-        let seq_num: i64 = account.seq_num.into();
-        let transaction: Transaction = Transaction {
-            source_account: MuxedAccount::Ed25519(Uint256(signing_key.verifying_key().to_bytes())),
+        Ok(Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256(
+                self.signing_key.verifying_key().to_bytes(),
+            )),
             fee: 10000,
-            seq_num: stellar_xdr::curr::SequenceNumber(seq_num + 1),
+            seq_num: stellar_xdr::curr::SequenceNumber(sequence),
             cond: Preconditions::None,
             memo: Memo::None,
             operations: vec![op].try_into()?,
             ext: stellar_xdr::curr::TransactionExt::V0,
-        };
-        return Ok(transaction);
+        })
+        // let account = self
+        //     .rpc
+        //     .get_account(
+        //         &Strkey::PublicKeyEd25519(Ed25519PublicKey(signing_key.verifying_key().to_bytes()))
+        //             .to_string(),
+        //     )
+        //     .await
+        //     .unwrap();
+        // let seq_num: i64 = account.seq_num.into();
     }
-    pub async fn new_liquidation_auction(
+    pub fn new_liquidation_auction(
         &self,
-        pool_id: Hash,
+        sequence: i64,
         user: Hash,
         percent_liquidated: u64,
-
-        signing_key: SigningKey,
-    ) -> Result<Transaction, Error> {
+    ) -> Result<Transaction, ()> {
         let op = Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(pool_id),
+                        contract_address: ScAddress::Contract(self.contract_id.clone()),
                         function_name: ScSymbol::try_from("new_liquidation_auction").unwrap(),
                         args: VecM::try_from(vec![
                             ScVal::Address(ScAddress::Account(AccountId(
@@ -148,25 +167,17 @@ impl BlendTxBuilder {
                 auth: VecM::default(),
             }),
         };
-        let account = self
-            .rpc
-            .get_account(
-                &Strkey::PublicKeyEd25519(Ed25519PublicKey(signing_key.verifying_key().to_bytes()))
-                    .to_string(),
-            )
-            .await
-            .unwrap();
-        let seq_num: i64 = account.seq_num.into();
-        let transaction: Transaction = Transaction {
-            source_account: MuxedAccount::Ed25519(Uint256(signing_key.verifying_key().to_bytes())),
+        Ok(Transaction {
+            source_account: MuxedAccount::Ed25519(Uint256(
+                self.signing_key.verifying_key().to_bytes(),
+            )),
             fee: 10000,
-            seq_num: stellar_xdr::curr::SequenceNumber(seq_num + 1),
+            seq_num: stellar_xdr::curr::SequenceNumber(sequence),
             cond: Preconditions::None,
             memo: Memo::None,
             operations: vec![op].try_into()?,
             ext: stellar_xdr::curr::TransactionExt::V0,
-        };
-        return Ok(transaction);
+        })
     }
 }
 

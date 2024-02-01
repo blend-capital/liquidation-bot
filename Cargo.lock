@@ -182,6 +182,7 @@ dependencies = [
  "opensea-stream",
  "reqwest",
  "soroban-cli",
+ "stellar-strkey 0.0.7",
  "stellar-xdr",
  "thiserror",
  "tokio",

@@ -289,3 +289,40 @@ pub fn sum_adj_asset_values(
     }
     (value, adjusted_value)
 }
+
+// returns 0 if user should be ignored, 1 if user should be watched, a pct if user should be liquidated for the given pct
+pub fn evaluate_user(
+    reserve_configs: &HashMap<Hash, ReserveConfig>,
+    asset_prices: &HashMap<Hash, i128>,
+    user_positions: &UserPositions,
+) -> u64 {
+    let (collateral_value, adj_collateral_value) = sum_adj_asset_values(
+        user_positions.collateral.clone(),
+        reserve_configs,
+        &asset_prices,
+        true,
+    );
+    let (liabilities_value, adj_liabilities_value) = sum_adj_asset_values(
+        user_positions.liabilities.clone(),
+        reserve_configs,
+        &asset_prices,
+        false,
+    );
+    let remaining_power = adj_collateral_value - adj_liabilities_value;
+    if remaining_power > adj_liabilities_value * 5 || adj_collateral_value == 0 {
+        // user's HF is over 5 so we ignore them// TODO: this might not be large enough
+        // we also ignore user's with no collateral
+        return 0;
+    } else if remaining_power > 0 {
+        return 1;
+    } else {
+        const SCL_7: i128 = 1e7 as i128;
+        let inv_lf = adj_liabilities_value * SCL_7 / liabilities_value;
+        let cf = adj_collateral_value * SCL_7 / collateral_value;
+        let numerator = adj_collateral_value * 1_100_0000 / SCL_7 - adj_liabilities_value;
+        let est_incentive = SCL_7 + (SCL_7 - cf * SCL_7 / inv_lf / 2);
+        let denominator = inv_lf * 1_100_0000 / SCL_7 - cf * est_incentive / SCL_7;
+        let pct = numerator * SCL_7 / denominator * 100 / adj_liabilities_value;
+        return if pct > 100 { 100 } else { pct as u64 };
+    }
+}
