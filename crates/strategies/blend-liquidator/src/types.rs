@@ -4,8 +4,6 @@ use artemis_core::{
     collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
 };
 
-use stellar_strkey::Strkey;
-
 use soroban_cli::rpc::Event as SorobanEvent;
 use stellar_xdr::curr::Hash;
 /// Core Event enum for the current strategy.
@@ -27,11 +25,14 @@ pub struct Config {
     pub rpc_url: String,
     pub pools: Vec<Hash>,
     pub assets: Vec<Hash>,
+    pub backstop: Hash,
+    pub backstop_token_address: Hash,
     pub bid_percentage: u64,
     pub oracle_id: Hash,
     pub us: String,
     pub min_hf: i128,
     pub required_profit: i128,
+    pub network_passphrase: String,
 }
 #[derive(Debug, Clone)]
 pub struct PendingFill {
@@ -56,6 +57,7 @@ pub struct ReserveConfig {
     pub collateral_factor: u32,
     pub est_b_rate: i128,
     pub est_d_rate: i128,
+    pub scalar: i128,
 }
 
 #[derive(Debug, Clone)]

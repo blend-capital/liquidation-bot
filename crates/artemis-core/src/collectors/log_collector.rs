@@ -1,14 +1,12 @@
 use core::time;
 use std::thread::sleep;
 
-use crate::types::{ Collector, CollectorStream };
+use crate::types::{Collector, CollectorStream};
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::FutureExt;
-use stellar_xdr::curr::{ ContractEventType, LedgerCloseMeta, TransactionMeta, VecM };
+use soroban_cli::rpc::{Client, Event, EventStart, EventType, GetEventsResponse};
 use tokio::sync::broadcast;
-use tokio_stream::{ wrappers::BroadcastStream, StreamExt };
-use soroban_cli::{ rpc::{ Client, EventStart, EventType, GetEventsResponse, Event } };
+use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 #[derive(Debug, Clone)]
 pub struct EventFilter {
     pub event_type: EventType,
@@ -58,8 +56,9 @@ impl Collector<Event> for LogCollector {
                             Some(EventType::Contract),
                             filter.contract_ids.as_slice(),
                             filter.topics.as_slice(),
-                            None
-                        ).await
+                            None,
+                        )
+                        .await
                         .unwrap();
                 } else {
                     result = client
@@ -68,8 +67,9 @@ impl Collector<Event> for LogCollector {
                             Some(EventType::Contract),
                             filter.contract_ids.as_slice(),
                             filter.topics.as_slice(),
-                            None
-                        ).await
+                            None,
+                        )
+                        .await
                         .unwrap();
                 }
 

@@ -1,7 +1,7 @@
 pub const WASM: &[u8] = soroban_sdk::contractfile!(
     file = "../blend-contracts/target/wasm32-unknown-unknown/optimized/pool.wasm",
     sha256 = "77424ea55688e45c2e7697c78102b8ab0b610e45723cbec3b13d7288aa32e636"
-);
+); //TODO: should use protocols.json eventually
 #[soroban_sdk::contractclient(name = "Client")]
 pub trait Contract {
     fn initialize(

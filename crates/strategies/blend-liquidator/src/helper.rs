@@ -118,11 +118,14 @@ pub fn decode_auction_data(auction_data: ScVal) -> AuctionData {
     }
     return AuctionData { bid, lot, block };
 }
-//Returns (index, collateral_factor, liability_factor)
-pub fn reserve_config_from_ledger_entry(ledger_entry_data: &LedgerEntryData) -> (u32, u32, u32) {
+//Returns (index, collateral_factor, liability_factor,scalar)
+pub fn reserve_config_from_ledger_entry(
+    ledger_entry_data: &LedgerEntryData,
+) -> (u32, u32, u32, i128) {
     let mut collateral_factor: u32 = 0;
     let mut liability_factor: u32 = 0;
     let mut index: u32 = 0;
+    let mut decimals: u32 = 0;
     match ledger_entry_data {
         LedgerEntryData::ContractData(data) => match &data.val {
             ScVal::Map(map) => {
@@ -148,6 +151,12 @@ pub fn reserve_config_from_ledger_entry(ledger_entry_data: &LedgerEntryData) -> 
                                 }
                                 _ => (),
                             },
+                            "decimals" => match &entry.val {
+                                ScVal::U32(num) => {
+                                    decimals = *num;
+                                }
+                                _ => (),
+                            },
                             _ => (),
                         }
                     }
@@ -157,7 +166,11 @@ pub fn reserve_config_from_ledger_entry(ledger_entry_data: &LedgerEntryData) -> 
         },
         _ => println!("Error: expected LedgerEntryData to be ContractData"),
     }
-    return (index, collateral_factor, liability_factor);
+    let scalar = 10i128.pow(decimals);
+    println!("index {}", index);
+    println!("cfactor {}", collateral_factor);
+    println!("scalar {}", scalar);
+    return (index, collateral_factor, liability_factor, scalar);
 }
 
 pub fn reserve_data_from_ledger_entry(ledger_entry_data: &LedgerEntryData) -> (i128, i128) {
@@ -208,14 +221,13 @@ pub fn user_positions_from_ledger_entry(
                                     if let Some(map) = map {
                                         for entry in map.0.iter() {
                                             let mut index: u32 = 0;
-                                            let mut balance: i128 = 0;
                                             match entry.key {
                                                 ScVal::U32(num) => {
                                                     index = num;
                                                 }
                                                 _ => (),
                                             }
-                                            balance = decode_i128_to_native(&entry.val);
+                                            let balance = decode_i128_to_native(&entry.val);
                                             for (asset_id, config) in reserve_configs.iter() {
                                                 if config.index == index {
                                                     user_positions
@@ -233,14 +245,13 @@ pub fn user_positions_from_ledger_entry(
                                     if let Some(map) = map {
                                         for entry in map.0.iter() {
                                             let mut index: u32 = 0;
-                                            let mut balance: i128 = 0;
                                             match entry.key {
                                                 ScVal::U32(num) => {
                                                     index = num;
                                                 }
                                                 _ => (),
                                             }
-                                            balance = decode_i128_to_native(&entry.val);
+                                            let balance = decode_i128_to_native(&entry.val);
                                             for (asset_id, config) in reserve_configs.iter() {
                                                 if config.index == index {
                                                     user_positions
@@ -277,16 +288,27 @@ pub fn sum_adj_asset_values(
     for (asset, amount) in assets.iter() {
         let config = reserve_conf.get(asset).unwrap();
         let modifiers: (i128, i128) = if collateral {
+            println!("c price {} ", asset_prices.get(asset).unwrap());
+            println!("b rate {}", config.est_b_rate);
             (config.est_b_rate, config.collateral_factor as i128)
         } else {
-            (config.est_d_rate, config.liability_factor as i128)
+            println!("l price {} ", asset_prices.get(asset).unwrap());
+            println!("d rate {}", config.est_b_rate);
+            let test = asset_prices.get(asset).unwrap() * amount / config.scalar;
+            println!("is ok? {}", test);
+            (
+                config.est_d_rate,
+                1e14 as i128 / config.liability_factor as i128,
+            )
         };
-        let raw_val = amount * modifiers.0 * asset_prices.get(asset).unwrap() / 1e16 as i128;
+        let raw_val =
+            asset_prices.get(asset).unwrap() * amount / config.scalar * modifiers.0 / 1e16 as i128;
         let adj_val = raw_val * modifiers.1 / 1e7 as i128;
 
         value += raw_val;
         adjusted_value += adj_val;
     }
+    println!("value {}", value);
     (value, adjusted_value)
 }
 
@@ -309,20 +331,30 @@ pub fn evaluate_user(
         false,
     );
     let remaining_power = adj_collateral_value - adj_liabilities_value;
+    println!("adj collateral {}", adj_collateral_value);
+    println!("adj liabilities {}", adj_liabilities_value);
+    let mut return_val = 0;
     if remaining_power > adj_liabilities_value * 5 || adj_collateral_value == 0 {
         // user's HF is over 5 so we ignore them// TODO: this might not be large enough
         // we also ignore user's with no collateral
-        return 0;
+        return_val = 0;
     } else if remaining_power > 0 {
-        return 1;
+        return_val = 1;
     } else {
         const SCL_7: i128 = 1e7 as i128;
         let inv_lf = adj_liabilities_value * SCL_7 / liabilities_value;
         let cf = adj_collateral_value * SCL_7 / collateral_value;
-        let numerator = adj_collateral_value * 1_100_0000 / SCL_7 - adj_liabilities_value;
-        let est_incentive = SCL_7 + (SCL_7 - cf * SCL_7 / inv_lf / 2);
+        let numerator = adj_liabilities_value * 1_100_0000 / SCL_7 - adj_collateral_value;
+        let est_incentive = SCL_7 + (SCL_7 - cf * SCL_7 / inv_lf) / 2;
         let denominator = inv_lf * 1_100_0000 / SCL_7 - cf * est_incentive / SCL_7;
-        let pct = numerator * SCL_7 / denominator * 100 / adj_liabilities_value;
-        return if pct > 100 { 100 } else { pct as u64 };
+        let pct = numerator * SCL_7 / denominator * 100 / liabilities_value;
+        println!("liabilities {}", liabilities_value);
+        println!("pct {}", pct);
+        if pct < 0 {
+            panic!("negative liq pct")
+        };
+        return_val = if pct > 100 { 100 } else { pct as u64 };
     }
+    println!("return val {}", return_val);
+    return_val
 }

@@ -16,7 +16,6 @@ stellar-strkey = "0.0.7"
 ## eth
 ethers = {workspace = true}
 opensea-stream = { git = "https://github.com/FrankieIsLost/opensea-stream-rs"}
-mev-share = "0.1.4"
 ethers-flashbots = { git = "https://github.com/FrankieIsLost/ethers-flashbots", features = ["rustls"] }
 
 ## async

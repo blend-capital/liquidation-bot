@@ -43,7 +43,6 @@ impl OngoingAuction {
         prices: &HashMap<Hash, i128>,
         reserve_configs: &HashMap<Hash, ReserveConfig>,
         our_positions: &UserPositions,
-        required_profit: i128,
         min_hf: i128,
     ) {
         let (collateral_value, adjusted_collateral_value) =
@@ -162,7 +161,13 @@ impl OngoingAuction {
 
         let profit_dif: i128 =
             self.target_profit_pct - (lot_value - bid_value) * 1e7 as i128 / lot_value;
-        let target_block_dif = profit_dif / 0_005_0000; // profit increases .05% per block //TODO: round away from 0 here
+        let target_block_dif = profit_dif as f64 / 0_005_0000 as f64; // profit increases .05% per block
+        if target_block_dif > 0.0 {
+            target_block_dif.ceil()
+        } else {
+            target_block_dif.floor()
+        };
+        let target_block_dif = target_block_dif as i128;
         let bid_required = if target_block_dif > 0 {
             raw_bid_required * (1e7 as i128 - 0_005_0000 * target_block_dif) - bid_offset
         } else {

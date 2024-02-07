@@ -1,12 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use ethers::types::Transaction;
 use std::pin::Pin;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 
 // use crate::collectors::block_collector::NewBlock;
-use crate::executors::flashbots_executor::FlashbotsBundle;
 // use crate::executors::soroban_executor::SubmitStellarTx;
 
 /// A stream of events emitted by a [Collector](Collector).
@@ -50,12 +48,11 @@ impl<E, F> CollectorMap<E, F> {
 }
 
 #[async_trait]
-impl<E1, E2, F> Collector<E2>
-    for CollectorMap<E1, F>
-    where
-        E1: Send + Sync + 'static,
-        E2: Send + Sync + 'static,
-        F: Fn(E1) -> E2 + Send + Sync + Clone + 'static
+impl<E1, E2, F> Collector<E2> for CollectorMap<E1, F>
+where
+    E1: Send + Sync + 'static,
+    E2: Send + Sync + 'static,
+    F: Fn(E1) -> E2 + Send + Sync + Clone + 'static,
 {
     async fn get_event_stream(&mut self) -> Result<CollectorStream<'_, E2>> {
         let stream = self.collector.get_event_stream().await?;
@@ -79,12 +76,11 @@ impl<A, F> ExecutorMap<A, F> {
 }
 
 #[async_trait]
-impl<A1, A2, F> Executor<A1>
-    for ExecutorMap<A2, F>
-    where
-        A1: Send + Sync + 'static,
-        A2: Send + Sync + 'static,
-        F: Fn(A1) -> Option<A2> + Send + Sync + Clone + 'static
+impl<A1, A2, F> Executor<A1> for ExecutorMap<A2, F>
+where
+    A1: Send + Sync + 'static,
+    A2: Send + Sync + 'static,
+    F: Fn(A1) -> Option<A2> + Send + Sync + Clone + 'static,
 {
     async fn execute(&self, action: A1) -> Result<()> {
         let action = (self.f)(action);
