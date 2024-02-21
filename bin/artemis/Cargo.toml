@@ -20,4 +20,5 @@ clap = { version = "4.2.5", features = ["derive"] }
 stellar-xdr = {workspace = true}
 soroban-cli = "20.1.1"
 stellar-strkey = "0.0.7"
+csv = "1.3.0"
 

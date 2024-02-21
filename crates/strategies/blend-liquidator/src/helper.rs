@@ -1,7 +1,17 @@
 use std::collections::HashMap;
 
-use crate::types::{AuctionData, ReserveConfig, UserPositions};
-use stellar_xdr::curr::{Hash, LedgerEntryData, ScAddress, ScVal};
+use crate::{
+    strategy::BlendLiquidator,
+    types::{AuctionData, ReserveConfig, UserPositions},
+};
+use ed25519_dalek::SigningKey;
+use soroban_cli::rpc::Client;
+use soroban_spec_tools::from_string_primitive;
+use stellar_xdr::curr::{
+    AccountId, Hash, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, Limits, Memo,
+    Operation, PublicKey, ReadXdr, ScAddress, ScSpecTypeDef, ScSymbol, ScVal, ScVec, Transaction,
+    TransactionEnvelope, TransactionV1Envelope, Uint256, VecM,
+};
 pub fn decode_entry_key(key: &ScVal) -> String {
     match key {
         ScVal::String(string) => {
@@ -302,7 +312,7 @@ pub fn sum_adj_asset_values(
             )
         };
         let raw_val =
-            asset_prices.get(asset).unwrap() * amount / config.scalar * modifiers.0 / 1e16 as i128;
+            asset_prices.get(asset).unwrap() * amount / config.scalar * modifiers.0 / 1e9 as i128; //oracle scalar is 7 on local, 14 on testnet
         let adj_val = raw_val * modifiers.1 / 1e7 as i128;
 
         value += raw_val;
@@ -334,12 +344,14 @@ pub fn evaluate_user(
     println!("adj collateral {}", adj_collateral_value);
     println!("adj liabilities {}", adj_liabilities_value);
     let mut return_val = 0;
-    if remaining_power > adj_liabilities_value * 5 || adj_collateral_value == 0 {
+    if adj_collateral_value == 0 && adj_liabilities_value > 0 {
+        return_val = 0; //we need to do a bad debt on these guys
+    } else if remaining_power > adj_liabilities_value * 5 || adj_collateral_value == 0 {
         // user's HF is over 5 so we ignore them// TODO: this might not be large enough
         // we also ignore user's with no collateral
-        return_val = 0;
-    } else if remaining_power > 0 {
         return_val = 1;
+    } else if remaining_power > 0 {
+        return_val = 2; // User's cooling but we still wanna track
     } else {
         const SCL_7: i128 = 1e7 as i128;
         let inv_lf = adj_liabilities_value * SCL_7 / liabilities_value;
@@ -357,4 +369,83 @@ pub fn evaluate_user(
     }
     println!("return val {}", return_val);
     return_val
+}
+
+pub async fn bstop_token_to_usdc(
+    rpc: &Client,
+    bstop_tkn_address: Hash,
+    backstop: Hash,
+    lp_amount: i128,
+    usdc_address: Hash,
+) -> Result<i128, ()> {
+    println!("getting bstop token value");
+    // A random key is fine for simulation
+    let key = SigningKey::from_bytes(&[0; 32]);
+
+    // fn wdr_tokn_amt_in_get_lp_tokns_out(
+    //     e: Env,
+    //     token_out: Address,
+    //     pool_amount_in: i128,
+    //     min_amount_out: i128,
+    //     user: Address,
+    // ) -> i128;
+
+    let op = Operation {
+        source_account: None,
+        body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+            host_function: stellar_xdr::curr::HostFunction::InvokeContract(InvokeContractArgs {
+                contract_address: ScAddress::Contract(bstop_tkn_address),
+                function_name: ScSymbol::try_from("wdr_tokn_amt_in_get_lp_tokns_out").unwrap(),
+                args: VecM::try_from(vec![ScVal::Vec(Some(
+                    ScVec::try_from(vec![
+                        from_string_primitive("0".to_string().as_str(), &ScSpecTypeDef::I128)
+                            .unwrap(),
+                        from_string_primitive(lp_amount.to_string().as_str(), &ScSpecTypeDef::I128)
+                            .unwrap(),
+                        ScVal::Address(ScAddress::Contract(usdc_address)),
+                        ScVal::Address(ScAddress::Contract(backstop)),
+                    ])
+                    .unwrap(),
+                ))])
+                .unwrap(),
+            }),
+            auth: VecM::default(),
+        }),
+    };
+    let transaction: TransactionEnvelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx: Transaction {
+            source_account: stellar_xdr::curr::MuxedAccount::Ed25519(Uint256(
+                key.verifying_key().to_bytes(),
+            )),
+            fee: 10000,
+            seq_num: stellar_xdr::curr::SequenceNumber(10),
+            cond: stellar_xdr::curr::Preconditions::None,
+            memo: Memo::None,
+            operations: vec![op].try_into()?,
+            ext: stellar_xdr::curr::TransactionExt::V0,
+        },
+        signatures: VecM::default(),
+    });
+    println!("sending sim request");
+    let sim_result = rpc.simulate_transaction(&transaction).await.unwrap();
+    println!("sim response gotten");
+    let contract_function_result =
+        ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none()).unwrap();
+    let mut usdc_out: i128 = 0;
+    match &contract_function_result {
+        ScVal::Map(data_map) => {
+            if let Some(data_map) = data_map {
+                let entry = &data_map[0].val;
+                match entry {
+                    ScVal::I128(value) => {
+                        usdc_out = value.into();
+                    }
+                    _ => (),
+                }
+            }
+        }
+        _ => (),
+    }
+
+    return Ok(usdc_out);
 }

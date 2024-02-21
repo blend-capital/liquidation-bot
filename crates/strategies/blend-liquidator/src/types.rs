@@ -27,12 +27,14 @@ pub struct Config {
     pub assets: Vec<Hash>,
     pub backstop: Hash,
     pub backstop_token_address: Hash,
+    pub usdc_token_address: Hash,
     pub bid_percentage: u64,
     pub oracle_id: Hash,
     pub us: String,
     pub min_hf: i128,
     pub required_profit: i128,
     pub network_passphrase: String,
+    pub all_user_path: String,
 }
 #[derive(Debug, Clone)]
 pub struct PendingFill {

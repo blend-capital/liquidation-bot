@@ -17,6 +17,10 @@ stellar-xdr = { version = "20.0.2", default-features = true, features = [] }
 ## eth
 ethers = { version = "2", features = ["ws", "rustls"]}
 
+## utils
+
+csv = { version = "1.3.0"}
+
 
 [profile.release]
 panic = 'abort'

@@ -12,6 +12,8 @@
 /// This module contains constants used by the strategy.
 pub mod constants;
 
+pub mod contracts;
+
 /// This module contains the core strategy implementation.
 pub mod strategy;
 
@@ -22,4 +24,3 @@ pub mod helper;
 mod transaction_builder;
 /// This module contains the core type definitions for the strategy.
 pub mod types;
-// pub mod bindings;

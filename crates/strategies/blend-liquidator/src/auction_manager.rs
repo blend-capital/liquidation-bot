@@ -25,7 +25,6 @@ impl OngoingAuction {
         user: Hash,
         auction_data: AuctionData,
         auction_type: u32, //0 for liquidation, 1 for interest, 2 for bad debt
-        target_profit_pct: i128,
     ) -> Self {
         Self {
             pool,
@@ -35,7 +34,7 @@ impl OngoingAuction {
             pct_to_fill: 0,
             pct_filled: 0,
             auction_type,
-            target_profit_pct,
+            target_profit_pct: 0,
         }
     }
     pub fn calc_liquidation_fill(
@@ -44,11 +43,14 @@ impl OngoingAuction {
         reserve_configs: &HashMap<Hash, ReserveConfig>,
         our_positions: &UserPositions,
         min_hf: i128,
+        min_profit: i128,
     ) {
         let (collateral_value, adjusted_collateral_value) =
             sum_adj_asset_values(self.auction_data.lot.clone(), reserve_configs, prices, true);
         let (liabilities_value, adjusted_liability_value) =
             sum_adj_asset_values(self.auction_data.bid.clone(), reserve_configs, prices, true);
+
+        self.target_profit_pct = min_profit / liabilities_value;
 
         let (_, our_collateral) = sum_adj_asset_values(
             our_positions.collateral.clone(),
@@ -64,7 +66,12 @@ impl OngoingAuction {
         );
 
         //TODO: this should take into account crossing positions and net them when possible (ie. user deposited collateral of the same type to pay off deposited debt)
-        let max_delta = (min_hf - our_collateral * 1e7 as i128 / our_debt) * our_debt;
+        let mut max_delta = 0;
+        if our_debt == 0 {
+            max_delta = our_collateral;
+        } else {
+            max_delta = (min_hf - our_collateral * 1e7 as i128 / our_debt) * our_debt;
+        }
 
         self.set_percent_and_target(
             collateral_value,
@@ -77,17 +84,18 @@ impl OngoingAuction {
     pub fn calc_interest_fill(
         &mut self,
         prices: &HashMap<Hash, i128>,
-        backstop_token: Hash,
         our_backstop_tokens: i128,
+        backstop_token: Hash,
+        bid_value: i128,
+        min_profit: i128,
     ) {
         let mut lot_value: i128 = 0;
         for (asset, amount) in self.auction_data.lot.iter() {
             lot_value += amount * prices.get(asset).unwrap() / 1e7 as i128;
         }
         let num_backstop_tokens = self.auction_data.bid.get(&backstop_token).unwrap();
-        let bid_value: i128 =
-            num_backstop_tokens * prices.get(&backstop_token).unwrap() / 1e7 as i128;
 
+        self.target_profit_pct = min_profit / bid_value;
         self.set_percent_and_target(
             lot_value,
             bid_value,
@@ -102,14 +110,13 @@ impl OngoingAuction {
         reserve_configs: &HashMap<Hash, ReserveConfig>,
         our_positions: &UserPositions,
         min_hf: i128,
-        backstop_token: Hash,
+        min_profit: i128,
+        lot_value: i128,
     ) {
-        let num_backstop_tokens = self.auction_data.bid.get(&backstop_token).unwrap();
-        let lot_value: i128 =
-            num_backstop_tokens * prices.get(&backstop_token).unwrap() / 1e7 as i128;
-
         let (liabilities_value, adjusted_liability_value) =
             sum_adj_asset_values(self.auction_data.bid.clone(), reserve_configs, prices, true);
+
+        self.target_profit_pct = min_profit / liabilities_value;
 
         let (_, our_collateral) = sum_adj_asset_values(
             our_positions.collateral.clone(),
@@ -167,7 +174,12 @@ impl OngoingAuction {
         } else {
             target_block_dif.floor()
         };
-        let target_block_dif = target_block_dif as i128;
+        println!("target_block_dif: {}", target_block_dif);
+        let target_block_dif = if target_block_dif < 200.0 {
+            target_block_dif as i128
+        } else {
+            200
+        };
         let bid_required = if target_block_dif > 0 {
             raw_bid_required * (1e7 as i128 - 0_005_0000 * target_block_dif) - bid_offset
         } else {
@@ -178,6 +190,6 @@ impl OngoingAuction {
         } else {
             (our_max_bid * 1e7 as i128 / bid_required / 1e5 as i128) as u64
         };
-        self.target_block = target_block_dif as u32 + 200 + self.auction_data.block;
+        self.target_block = (target_block_dif + 200) as u32 + self.auction_data.block;
     }
 }
