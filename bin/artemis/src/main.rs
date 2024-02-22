@@ -80,8 +80,8 @@ async fn main() -> Result<()> {
         EventFilter {
             event_type: EventType::Contract,
             contract_ids: vec![
-                "CA4AYYXSQWT7C6JXM7OJ45IQKXBXQQJSHJLGNSZLTPTA5MF6H33JICAV".to_string(), //stellar pool
-                "CDLT57WKQHCIYVODTN7KGTU3RKXDHZK3EPVQB2QIGYWOBVEYEELFVVZO".to_string(), //oracle
+                "CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN".to_string(), //stellar pool
+                "CA2NWEPNC6BD5KELGJDVWWTXUE7ASDKTNQNL6DN3TGBVWFEWSVVGMUAF".to_string(), //oracle
             ],
             topics: vec![],
         },
@@ -99,34 +99,34 @@ async fn main() -> Result<()> {
     let config = Config {
         rpc_url: network.clone(),
         pools: vec![Hash(
-            contract_id_from_str("CA4AYYXSQWT7C6JXM7OJ45IQKXBXQQJSHJLGNSZLTPTA5MF6H33JICAV")
+            contract_id_from_str("CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN")
                 .unwrap(), //Stellar pool
         )],
         assets: vec![
             Hash(
-                contract_id_from_str("CAPCGZLDC4GWUXZV3XDWCJ2E2PTSAJGQX447A664R4ZLKZNBZZHHEKIF")
+                contract_id_from_str("CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU")
                     .unwrap(),
             ), //USDC
             Hash(
-                contract_id_from_str("CDMLFMKMMD7MWZP3FKUBZPVHTUEDLSX4BYGYKH4GCESXYHS3IHQ4EIG4")
+                contract_id_from_str("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC")
                     .unwrap(), //XLM
             ),
         ],
         backstop: Hash(
-            contract_id_from_str("CA3EXRNP57Z4QCVODL4M63GRZSLSOOFNKYRQZECTY6MUV75GCIPLKPPH")
+            contract_id_from_str("CAYRY4MZ42MAT3VLTXCILUG7RUAPELZDCDSI2BWBYUJWIDDWW3HQV5LU")
                 .unwrap(), //Backstop address
         ),
         backstop_token_address: Hash(
-            contract_id_from_str("CCW6GCZDAWZ2YPMJLIDKTDF4GIH2PJ3ESXRFUDWOYTTOKHB7A2PCVNYX")
-                .unwrap(), //Comet address - TODO: switch to backstop token
+            contract_id_from_str("CBESO2HJRRXRNEDNZ6PAF5FXCLQNUSJK6YRWWY2CXCIANIHTMQUTHSOM")
+                .unwrap(), //Comet addres
         ),
         usdc_token_address: Hash(
-            contract_id_from_str("CAPCGZLDC4GWUXZV3XDWCJ2E2PTSAJGQX447A664R4ZLKZNBZZHHEKIF")
+            contract_id_from_str("CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU")
                 .unwrap(), //blend token address
         ),
         bid_percentage: 10000000,
         oracle_id: Hash(
-            contract_id_from_str("CDLT57WKQHCIYVODTN7KGTU3RKXDHZK3EPVQB2QIGYWOBVEYEELFVVZO")
+            contract_id_from_str("CA2NWEPNC6BD5KELGJDVWWTXUE7ASDKTNQNL6DN3TGBVWFEWSVVGMUAF")
                 .unwrap(),
         ),
         us: args.private_key.to_string(), //TODO: grab from args

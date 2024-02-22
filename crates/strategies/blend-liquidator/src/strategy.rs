@@ -1,9 +1,10 @@
 use artemis_core::collectors::block_collector::NewBlock;
 use artemis_core::executors::soroban_executor::SubmitStellarTx;
 use async_trait::async_trait;
-use csv;
+use csv::{self, WriterBuilder};
 use soroban_spec_tools::from_string_primitive;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::str::FromStr;
 use std::vec;
 
@@ -82,10 +83,11 @@ pub struct BlendLiquidator {
 impl BlendLiquidator {
     pub async fn new(config: &Config) -> Self {
         let us = SigningKey::from_bytes(&PrivateKey::from_string(&config.us).unwrap().0);
+        // need initial user: TODO: fix this
         let user_1 = Hash(
             SigningKey::from_bytes(
                 &PrivateKey::from_string(
-                    &"SCGGZWAIRLVTOGF3WJ3RVYQMMY2CVOITOHTOX5RGBNIRDL4SLJKVIUPW",
+                    &"SAHOFD3SEI4NWS2OXTXDMWJHYJ3C4V4PXM3JFY5MPOMHVCWTVO7ZVU6I",
                 )
                 .unwrap()
                 .0,
@@ -1108,7 +1110,7 @@ impl BlendLiquidator {
                             let lot_value = bstop_token_to_usdc(
                                 &self.rpc,
                                 self.backstop_token_address.clone(),
-                                self.backstop_id.clone(),
+                                self.us_public.clone(),
                                 *pending_fill
                                     .auction_data
                                     .lot
@@ -1536,7 +1538,11 @@ impl BlendLiquidator {
         if !self.all_user.contains(user_id) {
             self.all_user.push(user_id.clone());
             //write user to csv
-            let mut users_csv = csv::Writer::from_path(&self.user_path).unwrap();
+            let file = OpenOptions::new()
+                .append(true)
+                .open(&self.user_path)
+                .unwrap();
+            let mut users_csv = WriterBuilder::new().has_headers(false).from_writer(file);
             users_csv.write_record(&[user_id.to_string()]).unwrap();
             users_csv.flush().unwrap();
             if (collateral && amount < 0) || (!collateral && amount > 0) {

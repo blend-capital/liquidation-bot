@@ -378,6 +378,7 @@ pub async fn bstop_token_to_usdc(
     lp_amount: i128,
     usdc_address: Hash,
 ) -> Result<i128, ()> {
+    println!("");
     println!("getting bstop token value");
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
@@ -389,24 +390,20 @@ pub async fn bstop_token_to_usdc(
     //     min_amount_out: i128,
     //     user: Address,
     // ) -> i128;
-
+    println!("lp amount {}", lp_amount);
     let op = Operation {
         source_account: None,
         body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
             host_function: stellar_xdr::curr::HostFunction::InvokeContract(InvokeContractArgs {
                 contract_address: ScAddress::Contract(bstop_tkn_address),
                 function_name: ScSymbol::try_from("wdr_tokn_amt_in_get_lp_tokns_out").unwrap(),
-                args: VecM::try_from(vec![ScVal::Vec(Some(
-                    ScVec::try_from(vec![
-                        from_string_primitive("0".to_string().as_str(), &ScSpecTypeDef::I128)
-                            .unwrap(),
-                        from_string_primitive(lp_amount.to_string().as_str(), &ScSpecTypeDef::I128)
-                            .unwrap(),
-                        ScVal::Address(ScAddress::Contract(usdc_address)),
-                        ScVal::Address(ScAddress::Contract(backstop)),
-                    ])
-                    .unwrap(),
-                ))])
+                args: VecM::try_from(vec![
+                    ScVal::Address(ScAddress::Contract(usdc_address)),
+                    from_string_primitive(lp_amount.to_string().as_str(), &ScSpecTypeDef::I128)
+                        .unwrap(),
+                    from_string_primitive("0".to_string().as_str(), &ScSpecTypeDef::I128).unwrap(),
+                    ScVal::Address(ScAddress::Contract(backstop)),
+                ])
                 .unwrap(),
             }),
             auth: VecM::default(),
@@ -426,26 +423,16 @@ pub async fn bstop_token_to_usdc(
         },
         signatures: VecM::default(),
     });
-    println!("sending sim request");
     let sim_result = rpc.simulate_transaction(&transaction).await.unwrap();
-    println!("sim response gotten");
     let contract_function_result =
         ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none()).unwrap();
     let mut usdc_out: i128 = 0;
     match &contract_function_result {
-        ScVal::Map(data_map) => {
-            if let Some(data_map) = data_map {
-                let entry = &data_map[0].val;
-                match entry {
-                    ScVal::I128(value) => {
-                        usdc_out = value.into();
-                    }
-                    _ => (),
-                }
-            }
+        ScVal::I128(value) => {
+            usdc_out = value.into();
         }
         _ => (),
     }
-
+    println!("usdc out {}", usdc_out);
     return Ok(usdc_out);
 }
