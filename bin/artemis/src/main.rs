@@ -18,7 +18,7 @@ use tracing_subscriber::{filter, prelude::*};
 use artemis_core::engine::Engine;
 use artemis_core::types::{CollectorMap, ExecutorMap};
 use soroban_cli::utils::contract_id_from_str;
-
+use std::env;
 /// CLI Options.
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -59,13 +59,13 @@ async fn main() -> Result<()> {
     let args = Args::parse(); //at some point pull network from arg enum
     let path = "/usr/local/bin/stellar-core".to_string(); //TODO we need this for a core engine at some point
     let network = match args.network {
-        0 => "http://localhost:8000/soroban/rpc".to_string(),
+        0 => "http://127.0.0.1:8001".to_string(),
         1 => "https://soroban-testnet.stellar.org".to_string(),
         2 => "https://soroban.stellar.org".to_string(),
         _ => "https://soroban-testnet.stellar.org".to_string(),
     };
     let passphrase = match args.network {
-        0 => "Standalone Network ; February 2017".to_string(),
+        0 => "Test SDF Network ; September 2015".to_string(),
         1 => "Test SDF Network ; September 2015".to_string(),
         2 => "Public Global Stellar Network ; September 2015".to_string(),
         _ => "Test SDF Network ; September 2015".to_string(),
@@ -80,7 +80,8 @@ async fn main() -> Result<()> {
         EventFilter {
             event_type: EventType::Contract,
             contract_ids: vec![
-                "CA4AYYXSQWT7C6JXM7OJ45IQKXBXQQJSHJLGNSZLTPTA5MF6H33JICAV".to_string(), //stellar pool
+                "CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN".to_string(), //stellar pool
+                "CDGCNXWGZKZB5ZF7CVEVLDQ6YEP6QCRLZB32NMKHEUUEJIMVNTAAERD2".to_string(), //bridge pool
                 "CDLT57WKQHCIYVODTN7KGTU3RKXDHZK3EPVQB2QIGYWOBVEYEELFVVZO".to_string(), //oracle
             ],
             topics: vec![],
@@ -98,42 +99,60 @@ async fn main() -> Result<()> {
     // Set up Blend Liquidator.
     let config = Config {
         rpc_url: network.clone(),
-        pools: vec![Hash(
-            contract_id_from_str("CA4AYYXSQWT7C6JXM7OJ45IQKXBXQQJSHJLGNSZLTPTA5MF6H33JICAV")
-                .unwrap(), //Stellar pool
-        )],
+        pools: vec![
+            Hash(
+                contract_id_from_str("CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN")
+                    .unwrap(), //Stellar pool
+            ),
+            Hash(
+                contract_id_from_str("CDGCNXWGZKZB5ZF7CVEVLDQ6YEP6QCRLZB32NMKHEUUEJIMVNTAAERD2")
+                    .unwrap(), //Bridge pool
+            ),
+        ],
         assets: vec![
             Hash(
-                contract_id_from_str("CAPCGZLDC4GWUXZV3XDWCJ2E2PTSAJGQX447A664R4ZLKZNBZZHHEKIF")
+                contract_id_from_str("CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU")
                     .unwrap(),
             ), //USDC
             Hash(
-                contract_id_from_str("CDMLFMKMMD7MWZP3FKUBZPVHTUEDLSX4BYGYKH4GCESXYHS3IHQ4EIG4")
+                contract_id_from_str("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC")
                     .unwrap(), //XLM
+            ),
+            Hash(
+                contract_id_from_str("CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI")
+                    .unwrap(), //btc
+            ),
+            Hash(
+                contract_id_from_str("CAZAQB3D7KSLSNOSQKYD2V4JP5V2Y3B4RDJZRLBFCCIXDCTE3WHSY3UE")
+                    .unwrap(), //eth
             ),
         ],
         backstop: Hash(
-            contract_id_from_str("CA3EXRNP57Z4QCVODL4M63GRZSLSOOFNKYRQZECTY6MUV75GCIPLKPPH")
+            contract_id_from_str("CAYRY4MZ42MAT3VLTXCILUG7RUAPELZDCDSI2BWBYUJWIDDWW3HQV5LU")
                 .unwrap(), //Backstop address
         ),
         backstop_token_address: Hash(
-            contract_id_from_str("CCW6GCZDAWZ2YPMJLIDKTDF4GIH2PJ3ESXRFUDWOYTTOKHB7A2PCVNYX")
+            contract_id_from_str("CBESO2HJRRXRNEDNZ6PAF5FXCLQNUSJK6YRWWY2CXCIANIHTMQUTHSOM")
                 .unwrap(), //Comet address - TODO: switch to backstop token
         ),
         usdc_token_address: Hash(
-            contract_id_from_str("CAPCGZLDC4GWUXZV3XDWCJ2E2PTSAJGQX447A664R4ZLKZNBZZHHEKIF")
+            contract_id_from_str("CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU")
                 .unwrap(), //blend token address
         ),
         bid_percentage: 10000000,
         oracle_id: Hash(
-            contract_id_from_str("CDLT57WKQHCIYVODTN7KGTU3RKXDHZK3EPVQB2QIGYWOBVEYEELFVVZO")
+            contract_id_from_str("CA2NWEPNC6BD5KELGJDVWWTXUE7ASDKTNQNL6DN3TGBVWFEWSVVGMUAF")
                 .unwrap(),
         ),
         us: args.private_key.to_string(), //TODO: grab from args
         min_hf: 12000000,
         required_profit: 10000000,
         network_passphrase: passphrase.clone(),
-        all_user_path: "/Users/markuspaulsonluna/Dev/liquidation-bot/all_users.csv".to_string(), //PATH for csv of all users
+        all_user_path: env::current_dir()?
+            .join("all_users.csv")
+            .to_str()
+            .unwrap()
+            .to_string(), //PATH for csv of all users
     };
     let strategy = BlendLiquidator::new(&config).await;
     engine.add_strategy(Box::new(strategy));
