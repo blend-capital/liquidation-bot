@@ -13,6 +13,7 @@ use ed25519_dalek::SigningKey;
 use soroban_cli::utils::contract_id_from_str;
 use soroban_spec_tools::from_string_primitive;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::str::FromStr;
 use std::vec;
 use stellar_strkey::ed25519::PrivateKey;
@@ -95,7 +96,15 @@ impl BlendLiquidator {
 
         let mut all_user = vec![];
         all_user.push(user_1);
-        let mut users_csv = csv::Reader::from_path(&config.all_user_path).unwrap();
+        let users_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&config.all_user_path)
+            .unwrap();
+        let mut users_csv = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(users_file);
         for record in users_csv.records() {
             match record {
                 Ok(record) => {
@@ -1543,9 +1552,16 @@ impl BlendLiquidator {
         if !self.all_user.contains(user_id) {
             self.all_user.push(user_id.clone());
             //write user to csv
-            let mut users_csv = csv::Writer::from_path(&self.user_path).unwrap();
-            users_csv.write_record(&[user_id.to_string()]).unwrap();
-            users_csv.flush().unwrap();
+            let users_file = OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&self.user_path)
+                .unwrap();
+            let mut writer = csv::WriterBuilder::new()
+                .has_headers(false)
+                .from_writer(users_file);
+            writer.write_record(&[user_id.to_string()]).unwrap();
+            writer.flush().unwrap();
             if (collateral && amount < 0) || (!collateral && amount > 0) {
                 // User's borrowing power is going down so we should potentially add them
                 self.get_user_position(pool_id.clone(), user_id.clone())
