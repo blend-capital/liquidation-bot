@@ -1,16 +1,13 @@
 use std::collections::HashMap;
 
-use crate::{
-    strategy::BlendLiquidator,
-    types::{AuctionData, ReserveConfig, UserPositions},
-};
+use crate::types::{AuctionData, ReserveConfig, UserPositions};
 use ed25519_dalek::SigningKey;
 use soroban_cli::rpc::Client;
 use soroban_spec_tools::from_string_primitive;
 use stellar_xdr::curr::{
-    AccountId, Hash, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, Limits, Memo,
-    Operation, PublicKey, ReadXdr, ScAddress, ScSpecTypeDef, ScSymbol, ScVal, ScVec, Transaction,
-    TransactionEnvelope, TransactionV1Envelope, Uint256, VecM,
+    Hash, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, Limits, Memo, Operation,
+    ReadXdr, ScAddress, ScSpecTypeDef, ScSymbol, ScVal, ScVec, Transaction, TransactionEnvelope,
+    TransactionV1Envelope, Uint256, VecM,
 };
 pub fn decode_entry_key(key: &ScVal) -> String {
     match key {
@@ -359,7 +356,10 @@ pub fn evaluate_user(
         let numerator = adj_liabilities_value * 1_100_0000 / SCL_7 - adj_collateral_value;
         let est_incentive = SCL_7 + (SCL_7 - cf * SCL_7 / inv_lf) / 2;
         let denominator = inv_lf * 1_100_0000 / SCL_7 - cf * est_incentive / SCL_7;
-        let pct = numerator * SCL_7 / denominator * 100 / liabilities_value;
+        let mut pct = 0;
+        if denominator != 0 && liabilities_value != 0 {
+            pct = numerator * SCL_7 / denominator * 100 / liabilities_value;
+        }
         println!("liabilities {}", liabilities_value);
         println!("pct {}", pct);
         if pct < 0 {
