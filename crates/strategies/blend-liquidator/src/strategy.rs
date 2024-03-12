@@ -1,13 +1,3 @@
-use artemis_core::collectors::block_collector::NewBlock;
-use artemis_core::executors::soroban_executor::SubmitStellarTx;
-use async_trait::async_trait;
-use csv::{self, WriterBuilder};
-use soroban_spec_tools::from_string_primitive;
-use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::str::FromStr;
-use std::vec;
-
 use crate::auction_manager::OngoingAuction;
 use crate::helper::{
     bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_hash, evaluate_user,
@@ -15,8 +5,17 @@ use crate::helper::{
     user_positions_from_ledger_entry,
 };
 use crate::transaction_builder::{BlendTxBuilder, Request};
+use artemis_core::collectors::block_collector::NewBlock;
+use artemis_core::executors::soroban_executor::SubmitStellarTx;
+use async_trait::async_trait;
+use csv;
 use ed25519_dalek::SigningKey;
 use soroban_cli::utils::contract_id_from_str;
+use soroban_spec_tools::from_string_primitive;
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::str::FromStr;
+use std::vec;
 use stellar_strkey::ed25519::PrivateKey;
 use stellar_xdr::curr::{
     AccountId, Hash, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey,
@@ -98,13 +97,28 @@ impl BlendLiquidator {
 
         let mut all_user = vec![];
         all_user.push(user_1);
-        let mut users_csv = csv::Reader::from_path(&config.all_user_path).unwrap();
+        let users_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&config.all_user_path)
+            .unwrap();
+        let mut users_csv = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(users_file);
         for record in users_csv.records() {
-            let user = record.unwrap();
-            let user_hash = Hash::from_str(user.iter().next().unwrap()).unwrap();
-            all_user.push(user_hash.clone());
-            println!("");
-            println!("csv user: {:?}", user_hash);
+            match record {
+                Ok(record) => {
+                    let user = record;
+                    let user_hash = Hash::from_str(user.iter().next().unwrap()).unwrap();
+                    all_user.push(user_hash.clone());
+                    println!("");
+                    println!("csv user: {:?}", user_hash);
+                }
+                Err(err) => {
+                    println!("error reading record: {:?}", err);
+                }
+            }
         }
         Self {
             rpc: Client::new(config.rpc_url.as_str()).unwrap(),
@@ -143,7 +157,7 @@ impl Strategy<Event, Action> for BlendLiquidator {
             all_assets.push(self.usdc_address.clone());
         }
         self.get_asset_prices(all_assets).await?;
-
+        println!("{:?}", self.asset_prices);
         // Get reserve configs for given pools
         self.get_reserve_config(self.assets.clone()).await;
 
@@ -171,21 +185,22 @@ impl Strategy<Event, Action> for BlendLiquidator {
             }
 
             // Get all liquidations ongoing
-            let pool_users = self.users.get_mut(&pool).unwrap().clone();
-            for user in pool_users.iter() {
-                self.get_user_liquidation(pool.clone(), user.0.clone())
-                    .await?;
+            if self.users.get_mut(&pool).is_some() {
+                for user in self.users.get_mut(&pool).unwrap().clone() {
+                    self.get_user_liquidation(pool.clone(), user.0.clone())
+                        .await?;
+                }
             }
+
             // Get ongoing interest auctions
             self.get_interest_auction(pool.clone()).await?;
             // Get ongoing bad debt auctions
             self.get_bad_debt_auction(pool.clone()).await?;
         }
-
         info!("done syncing state");
         println!("pool count, {}", self.users.len());
         for pool in self.pools.iter() {
-            let user_count = self.users.get(pool).unwrap().len();
+            let user_count = self.users.entry(pool.to_owned()).or_default().len();
             let pool_str = pool.to_string();
             info!(
                 "found {:?} relevant users for pool {:?}",
@@ -1538,13 +1553,16 @@ impl BlendLiquidator {
         if !self.all_user.contains(user_id) {
             self.all_user.push(user_id.clone());
             //write user to csv
-            let file = OpenOptions::new()
+            let users_file = OpenOptions::new()
                 .append(true)
+                .create(true)
                 .open(&self.user_path)
                 .unwrap();
-            let mut users_csv = WriterBuilder::new().has_headers(false).from_writer(file);
-            users_csv.write_record(&[user_id.to_string()]).unwrap();
-            users_csv.flush().unwrap();
+            let mut writer = csv::WriterBuilder::new()
+                .has_headers(false)
+                .from_writer(users_file);
+            writer.write_record(&[user_id.to_string()]).unwrap();
+            writer.flush().unwrap();
             if (collateral && amount < 0) || (!collateral && amount > 0) {
                 // User's borrowing power is going down so we should potentially add them
                 self.get_user_position(pool_id.clone(), user_id.clone())

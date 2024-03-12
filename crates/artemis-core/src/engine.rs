@@ -1,9 +1,9 @@
-use tokio::sync::broadcast::{ self, Sender };
+use tokio::sync::broadcast::{self, Sender};
 use tokio::task::JoinSet;
 use tokio_stream::StreamExt;
-use tracing::{ error, info };
+use tracing::{error, info};
 
-use crate::types::{ Collector, Executor, Strategy };
+use crate::types::{Collector, Executor, Strategy};
 
 /// The main engine of Artemis. This struct is responsible for orchestrating the
 /// data flow between collectors, strategies, and executors.
@@ -53,7 +53,9 @@ impl<E, A> Default for Engine<E, A> {
 }
 
 impl<E, A> Engine<E, A>
-    where E: Send + Clone + 'static + std::fmt::Debug, A: Send + Clone + 'static + std::fmt::Debug
+where
+    E: Send + Clone + 'static + std::fmt::Debug,
+    A: Send + Clone + 'static + std::fmt::Debug,
 {
     /// Adds a collector to be used by the engine.
     pub fn add_collector(&mut self, collector: Box<dyn Collector<E>>) {
@@ -86,11 +88,10 @@ impl<E, A> Engine<E, A>
                 info!("starting executor... ");
                 loop {
                     match receiver.recv().await {
-                        Ok(action) =>
-                            match executor.execute(action).await {
-                                Ok(_) => {}
-                                Err(e) => error!("error executing action: {}", e),
-                            }
+                        Ok(action) => match executor.execute(action).await {
+                            Ok(_) => {}
+                            Err(e) => error!("error executing action: {}", e),
+                        },
                         Err(e) => error!("error receiving action: {}", e),
                     }
                 }
@@ -101,7 +102,10 @@ impl<E, A> Engine<E, A>
         for mut strategy in self.strategies {
             let mut event_receiver = event_sender.subscribe();
             let action_sender = action_sender.clone();
-            strategy.sync_state().await?;
+            match strategy.sync_state().await {
+                Ok(_) => {}
+                Err(e) => error!("error syncing state: {}", e),
+            }
 
             set.spawn(async move {
                 info!("starting strategy... ");
