@@ -1563,13 +1563,8 @@ impl BlendLiquidator {
                 .from_writer(users_file);
             writer.write_record(&[user_id.to_string()]).unwrap();
             writer.flush().unwrap();
-            if (collateral && amount < 0) || (!collateral && amount > 0) {
-                // User's borrowing power is going down so we should potentially add them
-                self.get_user_position(pool_id.clone(), user_id.clone())
-                    .await
-                    .unwrap();
-            }
-        } else if let Some(positions) = self.users.get_mut(&pool_id).unwrap().get_mut(&user_id) {
+        }
+        if let Some(positions) = self.users.get_mut(&pool_id).unwrap().get_mut(&user_id) {
             if collateral {
                 let balance = positions.collateral.entry(asset_id.clone()).or_insert(0);
                 *balance += amount;
@@ -1577,18 +1572,17 @@ impl BlendLiquidator {
                 let balance = positions.liabilities.entry(asset_id.clone()).or_insert(0);
                 *balance += amount;
             }
-            // User's borrowing power is going up so we need to potentially drop them
-            if (collateral && amount > 0) || (!collateral && amount < 0) {
-                if !self.assets.contains(asset_id) {
-                    self.users.get_mut(&pool_id).unwrap().remove(&user_id);
-                } else {
-                    let score = evaluate_user(
-                        &self.reserve_configs.get(&pool_id).unwrap(),
-                        &self.asset_prices,
-                        &positions,
-                    );
-                    self.act_on_score(user_id, pool_id, score);
-                }
+            // if bad asset we need to drop it
+            if !self.assets.contains(asset_id) {
+                self.users.get_mut(&pool_id).unwrap().remove(&user_id);
+            // user's borrowing power is going up so we should potentially drop them
+            } else if (collateral && amount > 0) || (!collateral && amount < 0) {
+                let score = evaluate_user(
+                    &self.reserve_configs.get(&pool_id).unwrap(),
+                    &self.asset_prices,
+                    &positions,
+                );
+                self.act_on_score(user_id, pool_id, score);
             }
         } else if (collateral && amount < 0) || (!collateral && amount > 0) {
             // User's borrowing power is going down so we should potentially add them

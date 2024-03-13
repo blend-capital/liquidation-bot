@@ -66,12 +66,11 @@ impl OngoingAuction {
         );
 
         //TODO: this should take into account crossing positions and net them when possible (ie. user deposited collateral of the same type to pay off deposited debt)
-        let mut max_delta = 0;
-        if our_debt == 0 {
-            max_delta = our_collateral;
+        let max_delta = if our_debt == 0 {
+            our_collateral
         } else {
-            max_delta = (min_hf - our_collateral * 1e7 as i128 / our_debt) * our_debt;
-        }
+            (min_hf - our_collateral * 1e7 as i128 / our_debt) * our_debt
+        };
 
         self.set_percent_and_target(
             collateral_value,
