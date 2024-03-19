@@ -90,7 +90,7 @@ impl BlendTxBuilder {
         // })
     }
 
-    pub fn new_bad_debt_auction(&self, contract: Hash, auction_type: u32) -> Result<Operation, ()> {
+    pub fn new_bad_debt_auction(&self) -> Result<Operation, ()> {
         Ok(Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
@@ -160,6 +160,47 @@ impl BlendTxBuilder {
         //     operations: vec![op].try_into()?,
         //     ext: stellar_xdr::curr::TransactionExt::V0,
         // })
+    }
+    pub fn get_last_price(&self, asset: &Hash) -> Result<Operation, ()> {
+        Ok(Operation {
+            source_account: None,
+            body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: stellar_xdr::curr::HostFunction::InvokeContract(
+                    InvokeContractArgs {
+                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        function_name: ScSymbol::try_from("lastprice").unwrap(),
+                        args: VecM::try_from(vec![ScVal::Vec(Some(
+                            ScVec::try_from(vec![
+                                ScVal::Symbol(ScSymbol::try_from("Stellar").unwrap()),
+                                ScVal::Address(ScAddress::Contract(asset.clone())),
+                            ])
+                            .unwrap(),
+                        ))])
+                        .unwrap(),
+                    },
+                ),
+                auth: VecM::default(),
+            }),
+        })
+    }
+
+    pub fn get_balance(&self, user: &Hash) -> Result<Operation, ()> {
+        Ok(Operation {
+            source_account: None,
+            body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                host_function: stellar_xdr::curr::HostFunction::InvokeContract(
+                    InvokeContractArgs {
+                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        function_name: ScSymbol::try_from("balance").unwrap(),
+                        args: VecM::try_from(vec![ScVal::Address(ScAddress::Account(AccountId(
+                            PublicKey::PublicKeyTypeEd25519(Uint256(user.0)),
+                        )))])
+                        .unwrap(),
+                    },
+                ),
+                auth: VecM::default(),
+            }),
+        })
     }
 }
 

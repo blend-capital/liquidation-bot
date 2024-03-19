@@ -2,13 +2,14 @@ use anyhow::Result;
 use artemis_core::collectors::block_collector::BlockCollector;
 use artemis_core::collectors::log_collector::{EventFilter, LogCollector};
 use artemis_core::executors::soroban_executor::SorobanExecutor;
+use blend_auctioneer::strategy::{self, BlendAuctioneer};
 use blend_liquidator::strategy::BlendLiquidator;
-use blend_liquidator::types::Config;
+use blend_utilities::types::Config;
 use clap::Parser;
 
 // use artemis_core::collectors::block_collector::BlockCollector;
 // use artemis_core::executors::soroban_executor::SorobanExecutor;
-use blend_liquidator::types::{Action, Event};
+use blend_utilities::types::{Action, Event};
 use soroban_cli::rpc::EventType;
 use stellar_xdr::curr::Hash;
 // use opensea_sudo_arb::strategy::OpenseaSudoArb;
@@ -153,8 +154,11 @@ async fn main() -> Result<()> {
             .to_str()
             .unwrap()
             .to_string(), //PATH for csv of all users
+        oracle_decimals: 7,
     };
-    let strategy = BlendLiquidator::new(&config).await;
+    let strategy = BlendAuctioneer::new(&config).await?;
+    engine.add_strategy(Box::new(strategy));
+    let strategy = BlendLiquidator::new(&config).await?;
     engine.add_strategy(Box::new(strategy));
 
     // Set up flashbots executor.

@@ -4,10 +4,9 @@
     no_crate_inject,
     attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
 ))]
-//! A strategy implementing atomic, cross-market NFT arbitrage between
-//! Seaport and Sudoswap. At a high level, we listen to a stream of new seaport orders,
-//! and compute whether we can atomically fulfill the order and sell the NFT into a
-//! sudoswap pool while making a profit.
+//! A strategy that creates liquidation and bad debt auctions for the Blend protocol on Stellar.
+//! We track user's, pool configurations, and asset prices, and create new liquidation auctions
+//! whenever we find a potential liquidation
 
 /// This module contains constants used by the strategy.
 pub mod constants;
@@ -16,6 +15,3 @@ pub mod contracts;
 
 /// This module contains the core strategy implementation.
 pub mod strategy;
-
-// This module manages ongoing auctions
-pub mod auction_manager;

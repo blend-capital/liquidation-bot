@@ -1,5 +1,5 @@
 [package]
-name = "blend-liquidator"
+name = "blend-auctioneer"
 version = "0.1.0"
 edition = "2021"
 
@@ -20,7 +20,4 @@ async-trait = "0.1.64"
 ## misc
 anyhow = "1.0.70"
 tracing = "0.1.37"
-
-
-## utils
 rusqlite = "0.31.0"
