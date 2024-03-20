@@ -3,8 +3,8 @@ use artemis_core::collectors::block_collector::NewBlock;
 use artemis_core::executors::soroban_executor::SubmitStellarTx;
 use async_trait::async_trait;
 use blend_utilities::helper::{
-    bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_hash, populate_db,
-    user_positions_from_ledger_entry,
+    bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_hash, get_asset_prices_db,
+    populate_db, sum_adj_asset_values, user_positions_from_ledger_entry,
 };
 use blend_utilities::transaction_builder::{BlendTxBuilder, Request};
 use blend_utilities::types::{Action, Config, Event, UserPositions};
@@ -150,7 +150,7 @@ impl BlendLiquidator {
         event: SorobanEvent,
         actions: &mut Vec<Action>,
     ) -> Option<Vec<Action>> {
-        println!("new soroban event");
+        // println!("new soroban event");
         //should build pending auctions and remove or modify pending auctions that are filled or partially filled by someone else
         let pool_id = Hash(contract_id_from_str(&event.contract_id).unwrap());
         let mut name: String = Default::default();
@@ -163,7 +163,7 @@ impl BlendLiquidator {
             _ => (),
         }
         let data = ScVal::from_xdr_base64(event.value.as_bytes(), Limits::none()).unwrap();
-        println!("name {}", name.as_str());
+        // println!("name {}", name.as_str());
         //Deserialize event body cases
         match name.as_str() {
             "new_liquidation_auction" => {
@@ -220,25 +220,24 @@ impl BlendLiquidator {
                 if auction_type == 1
                     && self.validate_assets(auction_data.bid.clone(), HashMap::new())
                 {
-                    let lot_value = bstop_token_to_usdc(
-                        &self.rpc,
-                        self.backstop_token_address.clone(),
-                        self.backstop_id.clone(),
-                        *pending_fill
-                            .auction_data
-                            .lot
-                            .get(&self.backstop_token_address)
-                            .unwrap(),
-                        self.usdc_address.clone(),
-                    )
-                    .await
-                    .unwrap();
                     pending_fill
                         .calc_bad_debt_fill(
                             self.bankroll.get(&pool_id).unwrap(),
                             self.min_hf,
                             self.required_profit,
-                            lot_value,
+                            bstop_token_to_usdc(
+                                &self.rpc,
+                                self.backstop_token_address.clone(),
+                                self.backstop_id.clone(),
+                                *pending_fill
+                                    .auction_data
+                                    .lot
+                                    .get(&self.backstop_token_address)
+                                    .unwrap(),
+                                self.usdc_address.clone(),
+                            )
+                            .await
+                            .unwrap(),
                         )
                         .unwrap();
                     println!(" new pending fill bad debt: {:?}", pending_fill.clone());
@@ -246,19 +245,6 @@ impl BlendLiquidator {
                     //we only care about lot here
                 } else if self.validate_assets(auction_data.lot.clone(), HashMap::new()) {
                     //Interest auction
-                    let bid_value = bstop_token_to_usdc(
-                        &self.rpc,
-                        self.backstop_token_address.clone(),
-                        self.backstop_id.clone(),
-                        *pending_fill
-                            .auction_data
-                            .bid
-                            .get(&self.backstop_token_address)
-                            .unwrap(),
-                        self.usdc_address.clone(),
-                    )
-                    .await
-                    .unwrap();
                     pending_fill
                         .calc_interest_fill(
                             self.wallet
@@ -266,7 +252,19 @@ impl BlendLiquidator {
                                 .unwrap()
                                 .clone(),
                             self.backstop_token_address.clone(),
-                            bid_value,
+                            bstop_token_to_usdc(
+                                &self.rpc,
+                                self.backstop_token_address.clone(),
+                                self.backstop_id.clone(),
+                                *pending_fill
+                                    .auction_data
+                                    .bid
+                                    .get(&self.backstop_token_address)
+                                    .unwrap(),
+                                self.usdc_address.clone(),
+                            )
+                            .await
+                            .unwrap(),
                             self.required_profit,
                         )
                         .unwrap();
@@ -348,7 +346,63 @@ impl BlendLiquidator {
         actions: &mut Vec<Action>,
     ) -> Option<Vec<Action>> {
         let liquidator_id = Hash(self.us.verifying_key().to_bytes());
-        for pending in self.pending_fill.iter() {
+        // Update prices every other block if we have pending fills
+        // TODO: implement better price tracking and update logic
+        for pending in self.pending_fill.iter_mut() {
+            //recalculate profitability
+            match pending.auction_type {
+                0 => pending
+                    .calc_liquidation_fill(
+                        &self.bankroll.get(&pending.pool).unwrap(),
+                        self.min_hf.clone(),
+                        self.required_profit.clone(),
+                    )
+                    .unwrap(),
+                1 => pending
+                    .calc_interest_fill(
+                        self.wallet
+                            .get(&self.backstop_token_address)
+                            .unwrap()
+                            .clone(),
+                        self.backstop_token_address.clone(),
+                        bstop_token_to_usdc(
+                            &self.rpc,
+                            self.backstop_token_address.clone(),
+                            self.backstop_id.clone(),
+                            *pending
+                                .auction_data
+                                .bid
+                                .get(&self.backstop_token_address)
+                                .unwrap(),
+                            self.usdc_address.clone(),
+                        )
+                        .await
+                        .unwrap(),
+                        self.required_profit,
+                    )
+                    .unwrap(),
+                2 => pending
+                    .calc_bad_debt_fill(
+                        self.bankroll.get(&pending.pool).unwrap(),
+                        self.min_hf,
+                        self.required_profit,
+                        bstop_token_to_usdc(
+                            &self.rpc,
+                            self.backstop_token_address.clone(),
+                            self.backstop_id.clone(),
+                            *pending
+                                .auction_data
+                                .lot
+                                .get(&self.backstop_token_address)
+                                .unwrap(),
+                            self.usdc_address.clone(),
+                        )
+                        .await
+                        .unwrap(),
+                    )
+                    .unwrap(),
+                _ => (),
+            };
             println!(
                 "on block {}, waiting for block {}",
                 event.number, pending.target_block
@@ -359,6 +413,21 @@ impl BlendLiquidator {
             };
             if pending.target_block <= event.number {
                 println!("sending liquidation tx");
+                let (mut lot_value, _) =
+                    sum_adj_asset_values(pending.auction_data.lot.clone(), &pending.pool, true)
+                        .unwrap();
+                let (mut bid_value, _) =
+                    sum_adj_asset_values(pending.auction_data.bid.clone(), &pending.pool, true)
+                        .unwrap();
+                let block_diff: i128 =
+                    event.number as i128 - pending.auction_data.block as i128 - 200;
+                if block_diff < 0 {
+                    lot_value = lot_value * (1 - block_diff * 0_005 / 1_000);
+                } else {
+                    bid_value = bid_value * (1 - block_diff * 0_005 / 1_000);
+                }
+                let expected_profit = lot_value - bid_value;
+                println!("expected profit: {}", expected_profit);
                 let op = op_builder
                     .submit(
                         liquidator_id.clone(),
@@ -429,7 +498,6 @@ impl BlendLiquidator {
                         }
 
                         let user_position = user_positions_from_ledger_entry(&value, &pool_id)?;
-                        println!("user: {:?}, {:?}", user_id, user_position.clone());
 
                         self.bankroll.insert(pool_id.clone(), user_position.clone());
                     }
@@ -441,7 +509,6 @@ impl BlendLiquidator {
     }
 
     async fn get_user_liquidation(&mut self, pool: Hash, user: Hash) -> Result<()> {
-        println!("checking for liquidation for, {}", user);
         let pool_id = ScAddress::Contract(pool.clone());
         let reserve_data_key = ScVal::Vec(Some(
             ScVec::try_from(vec![
@@ -479,8 +546,6 @@ impl BlendLiquidator {
             .await
             .unwrap();
         if let Some(entries) = result.entries {
-            println!("found liquidation for {}", user);
-            println!("entries: {:?}", entries.len());
             for entry in entries {
                 let value: LedgerEntryData =
                     LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
@@ -698,7 +763,6 @@ impl BlendLiquidator {
 
     // Gets balance of an asset
     async fn get_balance(&mut self, asset: Hash) -> Result<()> {
-        println!("getting balance for {:?}", asset);
         // A random key is fine for simulation
         let key = SigningKey::from_bytes(&[0; 32]);
         let op = BlendTxBuilder {
@@ -719,9 +783,7 @@ impl BlendLiquidator {
             },
             signatures: VecM::default(),
         });
-        println!("sending sim request");
         let sim_result = self.rpc.simulate_transaction(&transaction).await?;
-        println!("sim response gotten");
         let contract_function_result =
             ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none()).unwrap();
         let mut balance: i128 = 0;

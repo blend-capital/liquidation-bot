@@ -181,9 +181,7 @@ pub fn reserve_config_from_ledger_entry(
         _ => println!("Error: expected LedgerEntryData to be ContractData"),
     }
     let scalar = 10i128.pow(decimals);
-    println!("index {}", index);
-    println!("cfactor {}", collateral_factor);
-    println!("scalar {}", scalar);
+
     return (index, collateral_factor, liability_factor, scalar);
 }
 
@@ -258,12 +256,6 @@ pub fn user_positions_from_ledger_entry(
                                         for entry in map.0.iter() {
                                             match entry.key {
                                                 ScVal::U32(index) => {
-                                                    println!("index {}", index);
-                                                    println!(
-                                                        "pool {}",
-                                                        ScAddress::Contract(pool.clone())
-                                                            .to_string()
-                                                    );
                                                     user_positions.collateral.insert(
                                                         ReserveConfig::from_db_w_index(
                                                             pool, &index, &db,
@@ -312,16 +304,8 @@ pub fn sum_adj_asset_values(
         let config = ReserveConfig::from_db_w_asset(pool, asset, &db).unwrap();
 
         let modifiers: (i128, i128) = if collateral {
-            println!("asset :{}", ScAddress::Contract(asset.clone()).to_string());
-            println!("c price {} ", price);
-
-            println!("b rate {}", config.est_b_rate);
             (config.est_b_rate, config.collateral_factor as i128)
         } else {
-            println!("l price {} ", price);
-            println!("d rate {}", config.est_d_rate);
-            let test = price * amount / config.scalar;
-            println!("is ok? {}", test);
             (
                 config.est_d_rate,
                 1e14 as i128 / config.liability_factor as i128,
@@ -333,7 +317,6 @@ pub fn sum_adj_asset_values(
         value += raw_val;
         adjusted_value += adj_val;
     }
-    println!("value {}", value);
     db.close().unwrap();
     Ok((value, adjusted_value))
 }
@@ -345,8 +328,7 @@ pub fn evaluate_user(pool: &Hash, user_positions: &UserPositions) -> Result<u64>
     let (liabilities_value, adj_liabilities_value) =
         sum_adj_asset_values(user_positions.liabilities.clone(), pool, false)?;
     let remaining_power = adj_collateral_value - adj_liabilities_value;
-    println!("adj collateral {}", adj_collateral_value);
-    println!("adj liabilities {}", adj_liabilities_value);
+
     if adj_collateral_value == 0 && adj_liabilities_value > 0 {
         Ok(0) //we need to do a bad debt on these guys
     } else if remaining_power > adj_liabilities_value * 5 || adj_collateral_value == 0 {
@@ -366,7 +348,7 @@ pub fn evaluate_user(pool: &Hash, user_positions: &UserPositions) -> Result<u64>
         if denominator != 0 && liabilities_value != 0 {
             pct = (numerator * SCL_7 / denominator * 100 / liabilities_value) as u64;
         }
-        println!("pct {}", pct);
+        println!("user should be liqd for pct {}", pct);
         Ok(pct.clamp(1, 100))
     }
 }
@@ -378,19 +360,9 @@ pub async fn bstop_token_to_usdc(
     lp_amount: i128,
     usdc_address: Hash,
 ) -> Result<i128, ()> {
-    println!("");
-    println!("getting bstop token value");
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
 
-    // fn wdr_tokn_amt_in_get_lp_tokns_out(
-    //     e: Env,
-    //     token_out: Address,
-    //     pool_amount_in: i128,
-    //     min_amount_out: i128,
-    //     user: Address,
-    // ) -> i128;
-    println!("lp amount {}", lp_amount);
     let op = Operation {
         source_account: None,
         body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
@@ -653,8 +625,7 @@ pub async fn get_reserve_config_db(
                         match key.as_str() {
                             "ResData" => {
                                 let (b_rate, d_rate) = reserve_data_from_ledger_entry(&value);
-                                println!("b_rate {}", b_rate);
-                                println!("d_rate {}", d_rate);
+
                                 res_config.est_b_rate = b_rate;
                                 res_config.est_d_rate = d_rate;
                             }

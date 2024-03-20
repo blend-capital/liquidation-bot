@@ -4,6 +4,7 @@ use artemis_core::collectors::log_collector::{EventFilter, LogCollector};
 use artemis_core::executors::soroban_executor::SorobanExecutor;
 use blend_auctioneer::strategy::{self, BlendAuctioneer};
 use blend_liquidator::strategy::BlendLiquidator;
+use blend_utilities::contracts::ContractAddress;
 use blend_utilities::types::Config;
 use clap::Parser;
 
@@ -60,13 +61,13 @@ async fn main() -> Result<()> {
     let args = Args::parse(); //at some point pull network from arg enum
     let path = "/usr/local/bin/stellar-core".to_string(); //TODO we need this for a core engine at some point
     let network = match args.network {
-        0 => "http://127.0.0.1:8001".to_string(),
+        0 => "http://localhost:8000/soroban/rpc".to_string(),
         1 => "https://soroban-testnet.stellar.org".to_string(),
         2 => "https://soroban.stellar.org".to_string(),
         _ => "https://soroban-testnet.stellar.org".to_string(),
     };
     let passphrase = match args.network {
-        0 => "Test SDF Network ; September 2015".to_string(),
+        0 => "Standalone Network ; February 2017".to_string(),
         1 => "Test SDF Network ; September 2015".to_string(),
         2 => "Public Global Stellar Network ; September 2015".to_string(),
         _ => "Test SDF Network ; September 2015".to_string(),
@@ -74,16 +75,15 @@ async fn main() -> Result<()> {
 
     // Set up engine.
     let mut engine: Engine<Event, Action> = Engine::default();
-
     // Set up log collector
     let log_collector = Box::new(LogCollector::new(
         network.clone(),
         EventFilter {
             event_type: EventType::Contract,
             contract_ids: vec![
-                "CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN".to_string(), //stellar pool
-                "CDGCNXWGZKZB5ZF7CVEVLDQ6YEP6QCRLZB32NMKHEUUEJIMVNTAAERD2".to_string(), //bridge pool
-                "CDLT57WKQHCIYVODTN7KGTU3RKXDHZK3EPVQB2QIGYWOBVEYEELFVVZO".to_string(), //oracle
+                ContractAddress::get_stellar_pool(args.network).to_string(), //stellar pool
+                ContractAddress::get_bridge_pool(args.network).to_string(),  //bridge pool
+                ContractAddress::get_oracle(args.network).to_string(),       //oracle
             ],
             topics: vec![],
         },
@@ -102,48 +102,36 @@ async fn main() -> Result<()> {
         rpc_url: network.clone(),
         pools: vec![
             Hash(
-                contract_id_from_str("CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN")
-                    .unwrap(), //Stellar pool
+                contract_id_from_str(ContractAddress::get_stellar_pool(args.network)).unwrap(), //Stellar pool
             ),
             Hash(
-                contract_id_from_str("CDGCNXWGZKZB5ZF7CVEVLDQ6YEP6QCRLZB32NMKHEUUEJIMVNTAAERD2")
-                    .unwrap(), //Bridge pool
+                contract_id_from_str(ContractAddress::get_bridge_pool(args.network)).unwrap(), //Bridge pool
             ),
         ],
         assets: vec![
+            Hash(contract_id_from_str(ContractAddress::get_usdc(args.network)).unwrap()), //USDC
             Hash(
-                contract_id_from_str("CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU")
-                    .unwrap(),
-            ), //USDC
-            Hash(
-                contract_id_from_str("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC")
-                    .unwrap(), //XLM
+                contract_id_from_str(ContractAddress::get_xlm(args.network)).unwrap(), //XLM
             ),
             Hash(
-                contract_id_from_str("CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI")
-                    .unwrap(), //btc
+                contract_id_from_str(ContractAddress::get_btc(args.network)).unwrap(), //btc
             ),
             Hash(
-                contract_id_from_str("CAZAQB3D7KSLSNOSQKYD2V4JP5V2Y3B4RDJZRLBFCCIXDCTE3WHSY3UE")
-                    .unwrap(), //eth
+                contract_id_from_str(ContractAddress::get_eth(args.network)).unwrap(), //eth
             ),
         ],
         backstop: Hash(
-            contract_id_from_str("CAYRY4MZ42MAT3VLTXCILUG7RUAPELZDCDSI2BWBYUJWIDDWW3HQV5LU")
-                .unwrap(), //Backstop address
+            contract_id_from_str(ContractAddress::get_backstop(args.network)).unwrap(), //Backstop address
         ),
         backstop_token_address: Hash(
-            contract_id_from_str("CBESO2HJRRXRNEDNZ6PAF5FXCLQNUSJK6YRWWY2CXCIANIHTMQUTHSOM")
-                .unwrap(), //Comet address
+            contract_id_from_str(ContractAddress::get_backstop_token(args.network)).unwrap(), //Backstop token address
         ),
         usdc_token_address: Hash(
-            contract_id_from_str("CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU")
-                .unwrap(), //blend token address
+            contract_id_from_str(ContractAddress::get_usdc(args.network)).unwrap(), //USDC token address
         ),
         bid_percentage: 10000000,
         oracle_id: Hash(
-            contract_id_from_str("CA2NWEPNC6BD5KELGJDVWWTXUE7ASDKTNQNL6DN3TGBVWFEWSVVGMUAF")
-                .unwrap(),
+            contract_id_from_str(ContractAddress::get_oracle(args.network)).unwrap(), //oracle
         ),
         us: args.private_key.to_string(), //TODO: grab from args
         min_hf: 12000000,
