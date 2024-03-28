@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
         _ => "https://soroban-testnet.stellar.org".to_string(),
     };
     let passphrase = match args.network {
-        0 => "Standalone Network ; February 2017".to_string(),
+        0 => "Test SDF Network ; September 2015".to_string(), //Standalone Network ; February 2017
         1 => "Test SDF Network ; September 2015".to_string(),
         2 => "Public Global Stellar Network ; September 2015".to_string(),
         _ => "Test SDF Network ; September 2015".to_string(),
