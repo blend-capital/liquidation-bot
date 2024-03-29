@@ -47,6 +47,7 @@ impl OngoingAuction {
             sum_adj_asset_values(self.auction_data.bid.clone(), &self.pool, false)?;
 
         self.target_profit_pct = min_profit / liabilities_value;
+        println!("target_profit_pct: {}", self.target_profit_pct);
 
         let (_, our_collateral) =
             sum_adj_asset_values(our_positions.collateral.clone(), &self.pool, true)?;
@@ -90,6 +91,7 @@ impl OngoingAuction {
         );
         Ok(())
     }
+    //TODO: take a look at this function
     pub fn calc_bad_debt_fill(
         &mut self,
         our_positions: &UserPositions,
@@ -107,9 +109,15 @@ impl OngoingAuction {
         let (_, our_debt) =
             sum_adj_asset_values(our_positions.liabilities.clone(), &self.pool, false)?;
         //TODO: this should take into account crossing positions and net them when possible (ie. user deposited collateral of the same type to pay off deposited debt)
-        let max_delta = ((min_hf - our_collateral * 1e7 as i128 / our_debt) * our_debt)
-            .clamp(0, liabilities_value);
 
+        let max_delta = if our_debt == 0 {
+            our_collateral.clamp(0, liabilities_value)
+        } else {
+            // curr_hf - min_hf * debt = how much additional debt we can take on while remaining healthy
+            ((our_collateral * 1e7 as i128 / our_debt - min_hf) * our_debt)
+                .clamp(0, liabilities_value)
+        };
+        println!("max_delta: {}", max_delta);
         self.set_percent_and_target(
             lot_value,
             liabilities_value,
@@ -147,12 +155,18 @@ impl OngoingAuction {
 
         let profit_dif: i128 =
             self.target_profit_pct - (lot_value - bid_value) * 1e7 as i128 / bid_value;
+        let neutral_profit_pct = (lot_value - bid_value) * 1e7 as i128 / bid_value;
+        println!("neutral profit pct {}", neutral_profit_pct);
         let target_block_dif = if profit_dif > 0 {
             ((profit_dif as f64 / 0_005_0000 as f64).ceil() as i128).clamp(0, 200)
         // profit increases .05% per block
         } else {
             ((profit_dif as f64 / 0_005_0000 as f64).floor() as i128).clamp(-200, 0)
         };
+        println!(
+            "expected profit pct {}",
+            neutral_profit_pct + target_block_dif.abs() * 0_005_0000
+        );
 
         let bid_required = if target_block_dif > 0 {
             raw_bid_required * (1e7 as i128 - 0_005_0000 * target_block_dif) - bid_offset
@@ -164,6 +178,7 @@ impl OngoingAuction {
         } else {
             (our_max_bid * 1e7 as i128 / bid_required / 1e5 as i128) as u64
         };
+        println!("pct_to_fill: {}", self.pct_to_fill);
         self.target_block = (target_block_dif + 200) as u32 + self.auction_data.block;
     }
 }
