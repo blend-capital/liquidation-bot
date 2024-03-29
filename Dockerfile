@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
+FROM lukemathwalker/cargo-chef:latest AS chef
 WORKDIR app
 ## Planner stage: Cache dependencies
 FROM chef AS planner
@@ -17,9 +17,12 @@ COPY . .
 RUN cargo build --release
 
 ## Runtime stage: Copy binary to new image and run 
-FROM ubuntu:20.04 AS runtime
+FROM ubuntu:24.04 AS runtime
 WORKDIR app
-COPY --from=builder /app/target/release/artemis /usr/local/bin
+COPY --from=builder /app/target/release/artemis ./
+COPY --from=builder /app/docker/wait-for-soroban-rpc.sh ./
+
 # Install openssl and ca-certificates
-RUN apt-get update && apt install -y openssl && apt install -y ca-certificates
-ENTRYPOINT /usr/local/bin/artemis
+RUN apt-get update && apt install -y libsqlite3-dev && apt install -y openssl && apt install -y ca-certificates
+ENTRYPOINT ["./artemis"]
+CMD ["--private-key", "--network"]
