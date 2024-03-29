@@ -12,8 +12,6 @@
 /// This module contains constants used by the strategy.
 pub mod constants;
 
-pub mod contracts;
-
 /// This module contains the core strategy implementation.
 pub mod strategy;
 

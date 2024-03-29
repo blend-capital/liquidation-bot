@@ -11,8 +11,8 @@ use blend_utilities::transaction_builder::BlendTxBuilder;
 use blend_utilities::types::{Action, Config, Event, UserPositions};
 use ed25519_dalek::SigningKey;
 use rusqlite::Connection;
-use soroban_cli::rpc::{Client, Event as SorobanEvent};
 use soroban_cli::utils::contract_id_from_str;
+use soroban_rpc::{Client, Event as SorobanEvent};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::vec;
@@ -81,6 +81,7 @@ impl BlendAuctioneer {
 impl Strategy<Event, Action> for BlendAuctioneer {
     async fn sync_state(&mut self) -> Result<()> {
         // TODO: maybe updated missed users since last block this was run on
+        println!("syncing auctioneer state");
 
         let db = Connection::open("blend_users.db")?;
         db.execute(
@@ -90,12 +91,27 @@ impl Strategy<Event, Action> for BlendAuctioneer {
          )",
             [],
         )?;
-        let last_row = db.last_insert_rowid();
-        for i in 0..last_row {
-            let user = db.query_row("SELECT address FROM users WHERE id = ?1", [i], |row| {
-                row.get::<_, String>(1)
-            })?;
-            let user_hash = Hash::from_str(&user).unwrap();
+
+        let last_row = 1000; //must be manually inputted for now
+        for i in 1..last_row {
+            let row = db.query_row("SELECT address FROM users WHERE id = ?1", [i], |row| {
+                row.get::<_, String>(0)
+            });
+            let user = match row {
+                Ok(user) => user,
+                Err(e) => {
+                    println!("failing on row: {}", i);
+                    println!("error: {}", e);
+                    break;
+                }
+            };
+            println!("checking user: {}", user);
+
+            let user_hash = Hash(
+                stellar_strkey::ed25519::PublicKey::from_string(&user)
+                    .unwrap()
+                    .0,
+            );
 
             for pool in self.pools.clone() {
                 self.get_user_position(pool.clone(), user_hash.clone())
@@ -105,7 +121,7 @@ impl Strategy<Event, Action> for BlendAuctioneer {
 
         // connection needs to be closed for thread safety
         db.close().unwrap();
-
+        println!("synced auctioneer state");
         Ok(())
     }
 
@@ -134,7 +150,7 @@ impl BlendAuctioneer {
         event: SorobanEvent,
         actions: &mut Vec<Action>,
     ) -> Option<Vec<Action>> {
-        println!("new soroban event");
+        // println!("new soroban event");
         //should build pending auctions and remove or modify pending auctions that are filled or partially filled by someone else
         let pool_id = Hash(contract_id_from_str(&event.contract_id).unwrap());
         let mut name: String = Default::default();
@@ -147,7 +163,7 @@ impl BlendAuctioneer {
             _ => (),
         }
         let data = ScVal::from_xdr_base64(event.value.as_bytes(), Limits::none()).unwrap();
-        println!("name {}", name.as_str());
+        // println!("name {}", name.as_str());
         //Deserialize event body cases
         match name.as_str() {
             "new_liquidation_auction" => {
@@ -283,6 +299,9 @@ impl BlendAuctioneer {
                     }
                     _ => 0,
                 };
+                if supply_amount == 0 || b_tokens_minted == 0 {
+                    return None::<Vec<Action>>;
+                }
                 // Update reserve estimated b rate by using request.amount/b_tokens_minted from the emitted event
                 update_rate(pool_id, asset_id, supply_amount, b_tokens_minted, true).unwrap();
             }
@@ -318,7 +337,9 @@ impl BlendAuctioneer {
                     }
                     _ => 0,
                 };
-
+                if withdraw_amount == 0 || b_tokens_burned == 0 {
+                    return None::<Vec<Action>>;
+                }
                 // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
                 update_rate(pool_id, asset_id, withdraw_amount, b_tokens_burned, true).unwrap();
             }
@@ -358,13 +379,16 @@ impl BlendAuctioneer {
                     }
                     _ => 0,
                 };
-                println!(
-                    "Supply collateral!\nasset address:{:?}\nuser address: {:?}\nsupply amount: {:?}\nb tokens minted: {:?}",
-                    asset_id,
-                    user,
-                    supply_amount,
-                    b_tokens_minted
-                );
+                // println!(
+                //     "Supply collateral!\nasset address:{:?}\nuser address: {:?}\nsupply amount: {:?}\nb tokens minted: {:?}",
+                //     asset_id,
+                //     user,
+                //     supply_amount,
+                //     b_tokens_minted
+                // );
+                if supply_amount == 0 || b_tokens_minted == 0 {
+                    return None::<Vec<Action>>;
+                }
                 self.update_user(&pool_id, &user, &asset_id, b_tokens_minted, true)
                     .await
                     .unwrap();
@@ -407,14 +431,17 @@ impl BlendAuctioneer {
                     }
                     _ => 0,
                 };
-                println!(
-                    "Withdraw Collateral!\n
-                    asset address:{:?}\n
-                    user address: {:?}\n
-                    withdraw amount: {:?}\n
-                    b tokens burned: {:?}",
-                    asset_id, user, withdraw_amount, b_tokens_burned
-                );
+                // println!(
+                //     "Withdraw Collateral!\n
+                //     asset address:{:?}\n
+                //     user address: {:?}\n
+                //     withdraw amount: {:?}\n
+                //     b tokens burned: {:?}",
+                //     asset_id, user, withdraw_amount, b_tokens_burned
+                // );
+                if withdraw_amount == 0 || b_tokens_burned == 0 {
+                    return None::<Vec<Action>>;
+                }
                 // Update users collateral positions
                 self.update_user(&pool_id, &user, &asset_id, -b_tokens_burned, true)
                     .await
@@ -458,14 +485,17 @@ impl BlendAuctioneer {
                     }
                     _ => 0,
                 };
-                println!(
-                    "Borrow!\n
-                    asset address:{:?}\n
-                    user address: {:?}\n
-                    borrow amount: {:?}\n
-                    d tokens burned: {:?}",
-                    asset_id, user, borrow_amount, d_token_burned
-                );
+                if borrow_amount == 0 || d_token_burned == 0 {
+                    return None::<Vec<Action>>;
+                }
+                // println!(
+                //     "Borrow!\n
+                //     asset address:{:?}\n
+                //     user address: {:?}\n
+                //     borrow amount: {:?}\n
+                //     d tokens burned: {:?}",
+                //     asset_id, user, borrow_amount, d_token_burned
+                // );
                 // Update users liability positions
                 self.update_user(&pool_id, &user, &asset_id, d_token_burned, false)
                     .await
@@ -509,14 +539,17 @@ impl BlendAuctioneer {
                     }
                     _ => 0,
                 };
-                println!(
-                    "Repay!\n
-                    asset address:{:?}\n
-                    user address: {:?}\n
-                    repay_amount: {:?}\n
-                    d tokens burned: {:?}",
-                    asset_id, user, repay_amount, d_token_burned
-                );
+                // println!(
+                //     "Repay!\n
+                //     asset address:{:?}\n
+                //     user address: {:?}\n
+                //     repay_amount: {:?}\n
+                //     d tokens burned: {:?}",
+                //     asset_id, user, repay_amount, d_token_burned
+                // );
+                if repay_amount == 0 || d_token_burned == 0 {
+                    return None::<Vec<Action>>;
+                }
                 // Update users liability positions
                 self.update_user(&pool_id, &user, &asset_id, -d_token_burned, false)
                     .await
@@ -552,6 +585,7 @@ impl BlendAuctioneer {
             _ => (),
         }
         if actions.len() > 0 {
+            println!("returning actions");
             return Some(actions.to_vec());
         }
         None::<Vec<Action>>
@@ -565,8 +599,9 @@ impl BlendAuctioneer {
     ) -> Option<Vec<Action>> {
         //TEMP: check if liquidations are possible every 100 blocks since we're not getting oracle update events atm
         if event.number % 100 == 0 {
-            println!("");
-            println!("checking for actions");
+            println!(" block: {} ", event.number);
+        }
+        if event.number % 10 == 0 {
             get_asset_prices_db(
                 &self.rpc,
                 &self.oracle_id,
@@ -580,9 +615,9 @@ impl BlendAuctioneer {
                     for user in users.iter() {
                         let score = evaluate_user(pool, user.1).unwrap();
                         // create liquidation auction if needed
-                        println!("score {}", score);
                         let action = self.act_on_score(&user.0, &pool, score);
                         if action.is_some() {
+                            println!("creating liquidation auction for user: {:?}", user.0);
                             actions.push(action.unwrap());
                         }
                     }
@@ -591,6 +626,7 @@ impl BlendAuctioneer {
         }
 
         if actions.len() > 0 {
+            println!("returning actions");
             return Some(actions.to_vec());
         }
 
@@ -639,12 +675,9 @@ impl BlendAuctioneer {
                             _ => (),
                         }
                         let user_position = user_positions_from_ledger_entry(&value, &pool_id)?;
-                        println!("user: {:?}, {:?}", user_id, user_position.clone());
 
                         let score = evaluate_user(&pool_id, &user_position)?;
-                        println!("score {}", score);
                         if score != 1 {
-                            println!("adding user");
                             self.users
                                 .entry(pool_id.clone())
                                 .or_default()
@@ -708,10 +741,10 @@ impl BlendAuctioneer {
             [public_key.clone()],
         ) {
             Ok(_) => {
-                println!("found new user: {}", public_key.clone());
+                // println!("found new user: {}", public_key.clone());
             }
             Err(_) => {
-                println!("user already tracked");
+                // println!("user already tracked");
             }
         }
         db.close().unwrap();

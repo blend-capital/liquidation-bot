@@ -5,18 +5,15 @@ members = [
     "crates/artemis-core",
     "crates/generator",
     "crates/strategies/*",
-    "crates/clients/*", 
 ]
 
 default-members = ["bin/artemis", "bin/cli"]
 
 [workspace.dependencies]
 ## stellar
-stellar-xdr = { version = "20.0.2", default-features = true, features = [] }
-
-## eth
-ethers = { version = "2", features = ["ws", "rustls"]}
-
+stellar-xdr = { version = "20.1.0", default-features = true, features = [] }
+soroban-rpc = {version = "20.3.3"}
+soroban-cli = {version = "20.3.1"}
 ## utils
 
 csv = { version = "1.3.0"}

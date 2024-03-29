@@ -2,7 +2,7 @@ use crate::types::Executor;
 use anyhow::Result;
 use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
-use soroban_cli::rpc::Client;
+use soroban_rpc::Client;
 use std::vec;
 use stellar_strkey::{ed25519::PublicKey as Ed25519PublicKey, Strkey};
 use stellar_xdr::curr::{Memo, Operation, Preconditions, Transaction, Uint256};
@@ -64,10 +64,11 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
             seq_num: stellar_xdr::curr::SequenceNumber(seq_num),
             cond: Preconditions::None,
             memo: Memo::None,
-            operations: vec![action.op].try_into()?,
+            operations: vec![action.op.clone()].try_into()?,
             ext: stellar_xdr::curr::TransactionExt::V0,
         };
         // TODO: estimate gas and set fees here
+        println!("Submitting tx: {:?}", action.op.body.clone());
         self.rpc
             .prepare_and_send_transaction(
                 &tx,

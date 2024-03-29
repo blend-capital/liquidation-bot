@@ -5,7 +5,8 @@ use artemis_core::{
 };
 
 use rusqlite::{params, Connection};
-use soroban_cli::{rpc::Event as SorobanEvent, utils::contract_id_from_str};
+use soroban_cli::utils::contract_id_from_str;
+use soroban_rpc::Event as SorobanEvent;
 use stellar_xdr::curr::{Hash, ScAddress};
 /// Core Event enum for the current strategy.
 #[derive(Debug, Clone)]

@@ -19,10 +19,10 @@ const CARGO_FILE: &str = "Cargo.toml";
 #[derive(Debug, Clone, Parser)]
 pub struct StrategyParser {
     /// The root directory of the new project.
-    #[clap(value_hint = ValueHint::DirPath, default_value = "crates/strategies/")]
+    #[arg(value_hint = ValueHint::DirPath, default_value = "crates/strategies/")]
     root: PathBuf,
 
-    #[clap(long, short)]
+    #[arg(long, short)]
     strategy_name: String,
 }
 
