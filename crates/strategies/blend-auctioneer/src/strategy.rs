@@ -1,22 +1,22 @@
 use anyhow::Result;
-use artemis_core::collectors::block_collector::NewBlock;
-use artemis_core::executors::soroban_executor::SubmitStellarTx;
-use artemis_core::types::Strategy;
-use async_trait::async_trait;
-use blend_utilities::helper::{
-    decode_scaddress_to_hash, evaluate_user, get_asset_prices_db, get_reserve_config_db,
-    pool_has_asset, populate_db, update_rate, user_positions_from_ledger_entry,
+use artemis_core::{
+    collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
+    types::Strategy,
 };
-use blend_utilities::transaction_builder::BlendTxBuilder;
-use blend_utilities::types::{Action, Config, Event, UserPositions};
+use async_trait::async_trait;
+use blend_utilities::{
+    helper::{
+        decode_scaddress_to_hash, evaluate_user, get_asset_prices_db, get_reserve_config_db,
+        pool_has_asset, populate_db, update_rate, user_positions_from_ledger_entry,
+    },
+    transaction_builder::BlendTxBuilder,
+    types::{Action, Config, Event, UserPositions},
+};
 use ed25519_dalek::SigningKey;
 use rusqlite::Connection;
-use soroban_cli::rpc::{Client, Event as SorobanEvent};
 use soroban_cli::utils::contract_id_from_str;
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::vec;
-use stellar_strkey::ed25519::PrivateKey;
+use soroban_rpc::{Client, Event as SorobanEvent};
+use std::{collections::HashMap, str::FromStr, vec};
 use stellar_xdr::curr::{
     AccountId, Hash, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
     ScSymbol, ScVal, ScVec, StringM, Uint256,
@@ -48,10 +48,9 @@ pub struct BlendAuctioneer {
 }
 
 impl BlendAuctioneer {
-    pub async fn new(config: &Config) -> Result<Self> {
-        let us = SigningKey::from_bytes(&PrivateKey::from_string(&config.us).unwrap().0);
+    pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
-        let db = Connection::open("blend_assets.db")?;
+        let db = Connection::open("/opt/liquidation-bot/blend_assets.db")?;
         populate_db(&db, &config.assets)?;
         db.close().unwrap();
 
@@ -68,8 +67,8 @@ impl BlendAuctioneer {
             assets: config.assets.clone(),
             pools: config.pools.clone(),
             users: HashMap::new(),
-            us: us.clone(),
-            us_public: Hash(us.verifying_key().as_bytes().clone()),
+            us: signing_key.clone(),
+            us_public: Hash(signing_key.verifying_key().as_bytes().clone()),
             backstop_token_address: config.backstop_token_address.clone(),
             oracle_id: config.oracle_id.clone(),
             oracle_decimals: config.oracle_decimals,
@@ -83,7 +82,7 @@ impl Strategy<Event, Action> for BlendAuctioneer {
         // TODO: maybe updated missed users since last block this was run on
         println!("syncing auctioneer state");
 
-        let db = Connection::open("blend_users.db")?;
+        let db = Connection::open("/opt/liquidation-bot/blend_users.db")?;
         db.execute(
             "create table if not exists users (
             id integer primary key,
@@ -565,7 +564,7 @@ impl BlendAuctioneer {
                 ); //TODO: placeholder
                 let asset_id_str = ScAddress::Contract(asset_id).to_string();
                 // Check if we can liquidate anyone based on the new price
-                let db = Connection::open("blend_assets.db").unwrap();
+                let db = Connection::open("/opt/liquidation-bot/blend_assets.db").unwrap();
                 for pool in self.pools.clone().iter() {
                     if pool_has_asset(pool, &asset_id_str, &db) {
                         for users in self.users.get(pool).iter() {
@@ -730,7 +729,7 @@ impl BlendAuctioneer {
         amount: i128,
         collateral: bool,
     ) -> Result<()> {
-        let db = Connection::open("blend_users.db")?;
+        let db = Connection::open("/opt/liquidation-bot/blend_users.db")?;
         let public_key = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
             user_id.0,
         ))))

@@ -2,7 +2,7 @@ use crate::types::Executor;
 use anyhow::Result;
 use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
-use soroban_cli::rpc::Client;
+use soroban_rpc::Client;
 use std::vec;
 use stellar_strkey::{ed25519::PublicKey as Ed25519PublicKey, Strkey};
 use stellar_xdr::curr::{Memo, Operation, Preconditions, Transaction, Uint256};

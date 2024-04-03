@@ -10,6 +10,3 @@ pub mod helper;
 pub mod transaction_builder;
 /// This module contains types used in blend strategies
 pub mod types;
-
-// Blend Contracts
-pub mod contracts;

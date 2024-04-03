@@ -7,7 +7,7 @@ use crate::{
 use anyhow::Result;
 use ed25519_dalek::SigningKey;
 use rusqlite::{params, Connection};
-use soroban_cli::rpc::Client;
+use soroban_rpc::Client;
 use soroban_spec_tools::from_string_primitive;
 use stellar_xdr::curr::{
     Hash, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey,
@@ -221,7 +221,7 @@ pub fn user_positions_from_ledger_entry(
         collateral: HashMap::default(),
         liabilities: HashMap::default(),
     };
-    let db = Connection::open("blend_assets.db").unwrap();
+    let db = Connection::open("/opt/liquidation-bot/blend_assets.db").unwrap();
     match ledger_entry_data {
         LedgerEntryData::ContractData(data) => match &data.val {
             ScVal::Map(map) => {
@@ -290,7 +290,7 @@ pub fn sum_adj_asset_values(
     pool: &Hash,
     collateral: bool,
 ) -> Result<(i128, i128)> {
-    let db = Connection::open("blend_assets.db").unwrap();
+    let db = Connection::open("/opt/liquidation-bot/blend_assets.db").unwrap();
     let mut value: i128 = 0;
     let mut adjusted_value: i128 = 0;
     for (asset, amount) in assets.iter() {
@@ -412,7 +412,7 @@ pub fn update_rate(
     denominator: i128,
     b_rate: bool,
 ) -> Result<(), (Connection, rusqlite::Error)> {
-    let db = Connection::open("blend_assets.db").unwrap();
+    let db = Connection::open("/opt/liquidation-bot/blend_assets.db").unwrap();
 
     let rate = numerator * 1e9 as i128 / denominator;
     assert!(rate.gt(&1_000_0000));
@@ -499,7 +499,8 @@ pub async fn get_asset_prices_db(
     oracle_decimals: &u32,
     assets: &Vec<Hash>,
 ) -> Result<()> {
-    let db = Connection::open("blend_assets.db")?;
+    println!("getting asset prices");
+    let db = Connection::open("/opt/liquidation-bot/blend_assets.db")?;
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
     // get asset prices from oracle
@@ -645,7 +646,7 @@ pub async fn get_reserve_config_db(
             }
         }
     }
-    let db = Connection::open("blend_assets.db")?;
+    let db = Connection::open("/opt/liquidation-bot/blend_assets.db")?;
     for pool in pools {
         for asset in assets {
             let res_config = match reserve_configs.get(pool).unwrap().get(asset) {

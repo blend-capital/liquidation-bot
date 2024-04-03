@@ -1,31 +1,30 @@
 use crate::auction_manager::OngoingAuction;
-use artemis_core::collectors::block_collector::NewBlock;
-use artemis_core::executors::soroban_executor::SubmitStellarTx;
+use anyhow::Result;
+use artemis_core::{
+    collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
+    types::Strategy,
+};
 use async_trait::async_trait;
 use blend_utilities::helper::{
-    bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_hash, get_asset_prices_db,
-    populate_db, sum_adj_asset_values, user_positions_from_ledger_entry,
+    bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_hash, populate_db,
+    sum_adj_asset_values, user_positions_from_ledger_entry,
 };
-use blend_utilities::transaction_builder::{BlendTxBuilder, Request};
-use blend_utilities::types::{Action, Config, Event, UserPositions};
+use blend_utilities::{
+    transaction_builder::{BlendTxBuilder, Request},
+    types::{Action, Config, Event, UserPositions},
+};
 use ed25519_dalek::SigningKey;
 use rusqlite::Connection;
 use soroban_cli::utils::contract_id_from_str;
+use soroban_rpc::{Client, Event as SorobanEvent};
 use soroban_spec_tools::from_string_primitive;
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::vec;
-use stellar_strkey::ed25519::PrivateKey;
+use std::{collections::HashMap, str::FromStr, vec};
 use stellar_xdr::curr::{
     AccountId, Hash, LedgerEntryData, LedgerKeyContractData, Limits, Memo, MuxedAccount,
     Preconditions, PublicKey, ReadXdr, ScAddress, ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol,
     ScVal, ScVec, StringM, Transaction, TransactionEnvelope, TransactionV1Envelope, Uint256, VecM,
 };
 use tracing::info;
-
-use anyhow::Result;
-use artemis_core::types::Strategy;
-use soroban_cli::rpc::{Client, Event as SorobanEvent};
 
 pub struct BlendLiquidator {
     /// Soroban RPC client for interacting with chain
@@ -37,7 +36,7 @@ pub struct BlendLiquidator {
     /// Backstop ID
     backstop_id: Hash,
     /// Amount of profits to bid in gas
-    bid_percentage: u64,
+    // bid_percentage: u64,
     /// Required profitability for auctions
     required_profit: i128,
     /// Pending auction fills
@@ -59,10 +58,9 @@ pub struct BlendLiquidator {
 }
 
 impl BlendLiquidator {
-    pub async fn new(config: &Config) -> Result<Self> {
-        let us = SigningKey::from_bytes(&PrivateKey::from_string(&config.us).unwrap().0);
+    pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
-        let db = Connection::open("blend_assets.db")?;
+        let db = Connection::open("/opt/liquidation-bot/blend_assets.db")?;
         populate_db(&db, &config.assets)?;
         db.close().unwrap();
         Ok(Self {
@@ -70,13 +68,13 @@ impl BlendLiquidator {
             assets: config.assets.clone(),
             pools: config.pools.clone(),
             backstop_id: config.backstop.clone(),
-            bid_percentage: config.bid_percentage,
+            // bid_percentage: config.bid_percentage,
             required_profit: config.required_profit,
             pending_fill: vec![],
             bankroll: HashMap::new(),
             wallet: HashMap::new(), //TODO: need to pull this
-            us: us.clone(),
-            us_public: Hash(us.verifying_key().as_bytes().clone()),
+            us: signing_key.clone(),
+            us_public: Hash(signing_key.verifying_key().as_bytes().clone()),
             min_hf: config.min_hf,
             backstop_token_address: config.backstop_token_address.clone(),
             usdc_address: config.usdc_token_address.clone(),
@@ -103,7 +101,7 @@ impl Strategy<Event, Action> for BlendLiquidator {
             self.get_bad_debt_auction(pool.clone()).await?;
         }
         // Get all liquidations ongoing
-        let db = Connection::open("blend_users.db")?;
+        let db = Connection::open("/opt/liquidation-bot/blend_users.db")?;
         let last_row = 1000;
         for i in 1..last_row {
             let row = db.query_row("SELECT address FROM users WHERE id = ?1", [i], |row| {
@@ -530,19 +528,7 @@ impl BlendLiquidator {
                     LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
 
                 match &value {
-                    LedgerEntryData::ContractData(data) => {
-                        let mut user_id: Hash = Hash([0; 32]);
-                        match &data.key {
-                            ScVal::Vec(vec) => {
-                                if let Some(vec) = vec {
-                                    user_id = decode_scaddress_to_hash(&vec[1]);
-                                } else {
-                                    ();
-                                }
-                            }
-                            _ => (),
-                        }
-
+                    LedgerEntryData::ContractData(_) => {
                         let user_position = user_positions_from_ledger_entry(&value, &pool_id)?;
 
                         self.bankroll.insert(pool_id.clone(), user_position.clone());
