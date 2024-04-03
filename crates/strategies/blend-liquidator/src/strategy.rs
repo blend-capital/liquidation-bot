@@ -15,7 +15,6 @@ use soroban_spec_tools::from_string_primitive;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::vec;
-use stellar_strkey::ed25519::PrivateKey;
 use stellar_xdr::curr::{
     AccountId, Hash, LedgerEntryData, LedgerKeyContractData, Limits, Memo, MuxedAccount,
     Preconditions, PublicKey, ReadXdr, ScAddress, ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol,
@@ -59,10 +58,9 @@ pub struct BlendLiquidator {
 }
 
 impl BlendLiquidator {
-    pub async fn new(config: &Config) -> Result<Self> {
-        let us = SigningKey::from_bytes(&PrivateKey::from_string(&config.us).unwrap().0);
+    pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
-        let db = Connection::open("blend_assets.db")?;
+        let db = Connection::open("/opt/liquidation-bot/blend_assets.db")?;
         populate_db(&db, &config.assets)?;
         db.close().unwrap();
         Ok(Self {
@@ -75,8 +73,8 @@ impl BlendLiquidator {
             pending_fill: vec![],
             bankroll: HashMap::new(),
             wallet: HashMap::new(), //TODO: need to pull this
-            us: us.clone(),
-            us_public: Hash(us.verifying_key().as_bytes().clone()),
+            us: signing_key.clone(),
+            us_public: Hash(signing_key.verifying_key().as_bytes().clone()),
             min_hf: config.min_hf,
             backstop_token_address: config.backstop_token_address.clone(),
             usdc_address: config.usdc_token_address.clone(),
@@ -103,7 +101,7 @@ impl Strategy<Event, Action> for BlendLiquidator {
             self.get_bad_debt_auction(pool.clone()).await?;
         }
         // Get all liquidations ongoing
-        let db = Connection::open("blend_users.db")?;
+        let db = Connection::open("/opt/liquidation-bot/blend_users.db")?;
         let last_row = 1000;
         for i in 1..last_row {
             let row = db.query_row("SELECT address FROM users WHERE id = ?1", [i], |row| {
