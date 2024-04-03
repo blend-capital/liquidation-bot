@@ -1,25 +1,26 @@
 use anyhow::Result;
-use artemis_core::collectors::block_collector::BlockCollector;
-use artemis_core::collectors::log_collector::{EventFilter, LogCollector};
-use artemis_core::executors::soroban_executor::SorobanExecutor;
+use artemis_core::{
+    collectors::{
+        block_collector::BlockCollector,
+        log_collector::{EventFilter, LogCollector},
+    },
+    engine::Engine,
+    executors::soroban_executor::SorobanExecutor,
+    types::{CollectorMap, ExecutorMap},
+};
 use blend_auctioneer::strategy::BlendAuctioneer;
 use blend_liquidator::strategy::BlendLiquidator;
-use blend_utilities::types::Config;
-use blend_utilities::types::{Action, Event};
+use blend_utilities::types::{Action, Config, Event};
 use clap::Parser;
 use ed25519_dalek::SigningKey;
 use soroban_rpc::EventType;
 use stellar_strkey::ed25519::PrivateKey;
 use stellar_xdr::curr::ScAddress;
 
-// use opensea_sudo_arb::strategy::OpenseaSudoArb;
-use tracing::{info, Level};
-use tracing_subscriber::{filter, prelude::*};
-
-use artemis_core::engine::Engine;
-use artemis_core::types::{CollectorMap, ExecutorMap};
 use serde_json;
 use std::fs;
+use tracing::{info, Level};
+use tracing_subscriber::{filter, prelude::*};
 /// CLI Options.
 #[derive(Parser, Debug)]
 pub struct Args {

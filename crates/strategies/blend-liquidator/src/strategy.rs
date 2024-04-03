@@ -1,30 +1,30 @@
 use crate::auction_manager::OngoingAuction;
-use artemis_core::collectors::block_collector::NewBlock;
-use artemis_core::executors::soroban_executor::SubmitStellarTx;
+use anyhow::Result;
+use artemis_core::{
+    collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
+    types::Strategy,
+};
 use async_trait::async_trait;
 use blend_utilities::helper::{
     bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_hash, populate_db,
     sum_adj_asset_values, user_positions_from_ledger_entry,
 };
-use blend_utilities::transaction_builder::{BlendTxBuilder, Request};
-use blend_utilities::types::{Action, Config, Event, UserPositions};
+use blend_utilities::{
+    transaction_builder::{BlendTxBuilder, Request},
+    types::{Action, Config, Event, UserPositions},
+};
 use ed25519_dalek::SigningKey;
 use rusqlite::Connection;
 use soroban_cli::utils::contract_id_from_str;
+use soroban_rpc::{Client, Event as SorobanEvent};
 use soroban_spec_tools::from_string_primitive;
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::vec;
+use std::{collections::HashMap, str::FromStr, vec};
 use stellar_xdr::curr::{
     AccountId, Hash, LedgerEntryData, LedgerKeyContractData, Limits, Memo, MuxedAccount,
     Preconditions, PublicKey, ReadXdr, ScAddress, ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol,
     ScVal, ScVec, StringM, Transaction, TransactionEnvelope, TransactionV1Envelope, Uint256, VecM,
 };
 use tracing::info;
-
-use anyhow::Result;
-use artemis_core::types::Strategy;
-use soroban_rpc::{Client, Event as SorobanEvent};
 
 pub struct BlendLiquidator {
     /// Soroban RPC client for interacting with chain

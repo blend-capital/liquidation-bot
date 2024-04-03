@@ -1,21 +1,22 @@
 use anyhow::Result;
-use artemis_core::collectors::block_collector::NewBlock;
-use artemis_core::executors::soroban_executor::SubmitStellarTx;
-use artemis_core::types::Strategy;
-use async_trait::async_trait;
-use blend_utilities::helper::{
-    decode_scaddress_to_hash, evaluate_user, get_asset_prices_db, get_reserve_config_db,
-    pool_has_asset, populate_db, update_rate, user_positions_from_ledger_entry,
+use artemis_core::{
+    collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
+    types::Strategy,
 };
-use blend_utilities::transaction_builder::BlendTxBuilder;
-use blend_utilities::types::{Action, Config, Event, UserPositions};
+use async_trait::async_trait;
+use blend_utilities::{
+    helper::{
+        decode_scaddress_to_hash, evaluate_user, get_asset_prices_db, get_reserve_config_db,
+        pool_has_asset, populate_db, update_rate, user_positions_from_ledger_entry,
+    },
+    transaction_builder::BlendTxBuilder,
+    types::{Action, Config, Event, UserPositions},
+};
 use ed25519_dalek::SigningKey;
 use rusqlite::Connection;
 use soroban_cli::utils::contract_id_from_str;
 use soroban_rpc::{Client, Event as SorobanEvent};
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::vec;
+use std::{collections::HashMap, str::FromStr, vec};
 use stellar_xdr::curr::{
     AccountId, Hash, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
     ScSymbol, ScVal, ScVec, StringM, Uint256,
