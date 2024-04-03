@@ -16,4 +16,4 @@ artemis-core = { path = "../../artemis-core" }
 ## misc
 anyhow = "1.0.70"
 rusqlite = "0.31.0"
-
+serde = "1.0.192"
