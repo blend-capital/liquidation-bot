@@ -1,13 +1,11 @@
 [workspace]
 members = [
     "bin/artemis",
-    "bin/cli",
     "crates/artemis-core",
-    "crates/generator",
     "crates/strategies/*",
 ]
 
-default-members = ["bin/artemis", "bin/cli"]
+default-members = ["bin/artemis"]
 
 [workspace.dependencies]
 ## stellar
