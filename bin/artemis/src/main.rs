@@ -18,7 +18,7 @@ use stellar_strkey::ed25519::PrivateKey;
 use stellar_xdr::curr::ScAddress;
 
 use serde_json;
-use std::fs;
+use std::{fs, path::Path};
 use tracing::{info, Level};
 use tracing_subscriber::{filter, prelude::*};
 /// CLI Options.
@@ -33,16 +33,21 @@ pub struct Args {
 async fn main() -> Result<()> {
     // Set up tracing and parse args.
     let filter = filter::Targets::new()
-        .with_target("opensea_sudo_arb", Level::INFO)
-        .with_target("artemis_core", Level::INFO);
+        .with_target("artemis_core", Level::INFO)
+        .with_target("blend_liquidator", Level::INFO)
+        .with_target("blend_auctioneer", Level::INFO);
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(filter)
         .init();
 
     let args = Args::parse();
-    let config_data =
-        fs::read_to_string("/opt/liquidation-bot/config.json").expect("Unable to read config file");
+    let config_path = if Path::new("/.dockerenv").exists() {
+        "/opt/liquidation-bot/config.json"
+    } else {
+        "./config.json"
+    };
+    let config_data = fs::read_to_string(config_path).expect("Unable to read config file");
     let config: Config = serde_json::from_str(&config_data).expect("Unable to parse json");
     let signing_key =
         SigningKey::from_bytes(&PrivateKey::from_string(&args.private_key).unwrap().0);

@@ -8,10 +8,5 @@
 //! We track user's, pool configurations, and asset prices, and create new liquidation auctions
 //! whenever we find a potential liquidation
 
-/// This module contains constants used by the strategy.
-pub mod constants;
-
-pub mod contracts;
-
 /// This module contains the core strategy implementation.
 pub mod strategy;

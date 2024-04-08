@@ -12,8 +12,10 @@ soroban-cli = {workspace = true}
 ed25519-dalek = "=2.0.0"
 soroban-spec-tools = "20.2.0"
 artemis-core = { path = "../../artemis-core" }
+soroban-fixed-point-math = "1.0.0"
 
 ## misc
 anyhow = "1.0.70"
 rusqlite = "0.31.0"
 serde = "1.0.192"
+tracing = "0.1.37"

@@ -184,7 +184,12 @@ impl BlendTxBuilder {
         })
     }
 
-    pub fn get_balance(&self, user: &Hash) -> Result<Operation, ()> {
+    pub fn get_balance(&self, user: &Hash, is_contract: bool) -> Result<Operation, ()> {
+        let address = if is_contract {
+            ScAddress::Contract(user.clone())
+        } else {
+            ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(user.0))))
+        };
         Ok(Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
@@ -192,10 +197,7 @@ impl BlendTxBuilder {
                     InvokeContractArgs {
                         contract_address: ScAddress::Contract(self.contract_id.clone()),
                         function_name: ScSymbol::try_from("balance").unwrap(),
-                        args: VecM::try_from(vec![ScVal::Address(ScAddress::Account(AccountId(
-                            PublicKey::PublicKeyTypeEd25519(Uint256(user.0)),
-                        )))])
-                        .unwrap(),
+                        args: VecM::try_from(vec![ScVal::Address(address)]).unwrap(),
                     },
                 ),
                 auth: VecM::default(),

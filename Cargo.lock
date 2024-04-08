@@ -256,6 +256,7 @@ dependencies = [
  "rusqlite",
  "soroban-cli",
  "soroban-rpc",
+ "soroban-spec-tools",
  "stellar-strkey 0.0.7",
  "stellar-xdr",
  "tracing",
@@ -272,6 +273,7 @@ dependencies = [
  "ed25519-dalek 2.0.0",
  "rusqlite",
  "soroban-cli",
+ "soroban-fixed-point-math",
  "soroban-rpc",
  "soroban-spec-tools",
  "stellar-strkey 0.0.7",
@@ -289,9 +291,11 @@ dependencies = [
  "rusqlite",
  "serde",
  "soroban-cli",
+ "soroban-fixed-point-math",
  "soroban-rpc",
  "soroban-spec-tools",
  "stellar-xdr",
+ "tracing",
 ]
 
 [[package]]
@@ -3698,6 +3702,15 @@ dependencies = [
  "serde_json",
  "stellar-xdr",
  "syn 2.0.39",
+]
+
+[[package]]
+name = "soroban-fixed-point-math"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "230e5902daf9de6e7591aa7864dcf763ff96914a4460a0294a5dfd62b3181e0f"
+dependencies = [
+ "soroban-sdk",
 ]
 
 [[package]]

@@ -14,6 +14,7 @@ stellar-strkey = "0.0.7"
 soroban-spec-tools = "20.2.0"
 artemis-core = { path = "../../artemis-core" }
 blend-utilities = { path = "../blend-utilities" }
+soroban-fixed-point-math = "1.0.0"
 
 ## async
 async-trait = "0.1.64"

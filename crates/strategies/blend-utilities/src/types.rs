@@ -35,6 +35,8 @@ pub struct Config {
     pub backstop_token_address: Hash,
     #[serde(deserialize_with = "from_strkey")]
     pub usdc_token_address: Hash,
+    #[serde(deserialize_with = "from_strkey")]
+    pub xlm_address: Hash,
     pub bid_percentage: u64,
     #[serde(deserialize_with = "from_strkey")]
     pub oracle_id: Hash,
