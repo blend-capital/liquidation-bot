@@ -20,7 +20,6 @@ RUN cargo build --release
 FROM ubuntu:24.04 AS runtime
 WORKDIR app
 COPY --from=builder /app/target/release/artemis ./
-ENV RUNNING_DOCKER=true
 # Install openssl and ca-certificates
 RUN apt-get update && apt install -y libsqlite3-dev && apt install -y openssl && apt install -y ca-certificates
 ENTRYPOINT ["./artemis"]
