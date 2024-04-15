@@ -13,6 +13,7 @@ pub mod auction_manager;
 pub mod auctioneer_strategy;
 pub mod constants;
 pub mod db_manager;
+mod error_logger;
 pub mod helper;
 pub mod liquidation_strategy;
 pub mod transaction_builder;

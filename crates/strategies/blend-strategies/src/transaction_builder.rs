@@ -16,14 +16,8 @@ pub struct Request {
 }
 
 impl BlendTxBuilder {
-    pub fn submit(
-        &self,
-        from: Hash,
-        to: Hash,
-        spender: Hash,
-        requests: Vec<Request>,
-    ) -> Result<Operation, ()> {
-        Ok(Operation {
+    pub fn submit(&self, from: Hash, to: Hash, spender: Hash, requests: Vec<Request>) -> Operation {
+        Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
@@ -47,21 +41,10 @@ impl BlendTxBuilder {
                 ),
                 auth: VecM::default(),
             }),
-        })
-        // Ok(Transaction {
-        //     source_account: MuxedAccount::Ed25519(Uint256(
-        //         self.signing_key.verifying_key().to_bytes(),
-        //     )),
-        //     fee: 10000,
-        //     seq_num: stellar_xdr::curr::SequenceNumber(sequence),
-        //     cond: Preconditions::None,
-        //     memo: Memo::None,
-        //     operations: vec![op].try_into()?,
-        //     ext: stellar_xdr::curr::TransactionExt::V0,
-        // })
+        }
     }
-    pub fn bad_debt(&self, user: Hash) -> Result<Operation, ()> {
-        Ok(Operation {
+    pub fn bad_debt(&self, user: Hash) -> Operation {
+        Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
@@ -76,22 +59,11 @@ impl BlendTxBuilder {
                 ),
                 auth: VecM::default(),
             }),
-        })
-        // Ok(Transaction {
-        //     source_account: MuxedAccount::Ed25519(Uint256(
-        //         self.signing_key.verifying_key().to_bytes(),
-        //     )),
-        //     fee: 10000,
-        //     seq_num: stellar_xdr::curr::SequenceNumber(sequence),
-        //     cond: Preconditions::None,
-        //     memo: Memo::None,
-        //     operations: vec![op].try_into()?,
-        //     ext: stellar_xdr::curr::TransactionExt::V0,
-        // })
+        }
     }
 
-    pub fn new_bad_debt_auction(&self) -> Result<Operation, ()> {
-        Ok(Operation {
+    pub fn new_bad_debt_auction(&self) -> Operation {
+        Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
@@ -103,34 +75,10 @@ impl BlendTxBuilder {
                 ),
                 auth: VecM::default(),
             }),
-        })
-        // Ok(Transaction {
-        //     source_account: MuxedAccount::Ed25519(Uint256(
-        //         self.signing_key.verifying_key().to_bytes(),
-        //     )),
-        //     fee: 10000,
-        //     seq_num: stellar_xdr::curr::SequenceNumber(sequence),
-        //     cond: Preconditions::None,
-        //     memo: Memo::None,
-        //     operations: vec![op].try_into()?,
-        //     ext: stellar_xdr::curr::TransactionExt::V0,
-        // })
-        // let account = self
-        //     .rpc
-        //     .get_account(
-        //         &Strkey::PublicKeyEd25519(Ed25519PublicKey(signing_key.verifying_key().to_bytes()))
-        //             .to_string(),
-        //     )
-        //     .await
-        //     .unwrap();
-        // let seq_num: i64 = account.seq_num.into();
+        }
     }
-    pub fn new_liquidation_auction(
-        &self,
-        user: Hash,
-        percent_liquidated: u64,
-    ) -> Result<Operation, ()> {
-        Ok(Operation {
+    pub fn new_liquidation_auction(&self, user: Hash, percent_liquidated: u64) -> Operation {
+        Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
@@ -148,21 +96,10 @@ impl BlendTxBuilder {
                 ),
                 auth: VecM::default(),
             }),
-        })
-        // Ok(Transaction {
-        //     source_account: MuxedAccount::Ed25519(Uint256(
-        //         self.signing_key.verifying_key().to_bytes(),
-        //     )),
-        //     fee: 10000,
-        //     seq_num: stellar_xdr::curr::SequenceNumber(sequence),
-        //     cond: Preconditions::None,
-        //     memo: Memo::None,
-        //     operations: vec![op].try_into()?,
-        //     ext: stellar_xdr::curr::TransactionExt::V0,
-        // })
+        }
     }
-    pub fn get_last_price(&self, asset: &Hash) -> Result<Operation, ()> {
-        Ok(Operation {
+    pub fn get_last_price(&self, asset: &Hash) -> Operation {
+        Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
@@ -181,16 +118,16 @@ impl BlendTxBuilder {
                 ),
                 auth: VecM::default(),
             }),
-        })
+        }
     }
 
-    pub fn get_balance(&self, user: &Hash, is_contract: bool) -> Result<Operation, ()> {
+    pub fn get_balance(&self, user: &Hash, is_contract: bool) -> Operation {
         let address = if is_contract {
             ScAddress::Contract(user.clone())
         } else {
             ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(user.0))))
         };
-        Ok(Operation {
+        Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
@@ -202,7 +139,7 @@ impl BlendTxBuilder {
                 ),
                 auth: VecM::default(),
             }),
-        })
+        }
     }
 }
 

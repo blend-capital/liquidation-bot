@@ -7,9 +7,8 @@ use crate::{
     transaction_builder::BlendTxBuilder,
     types::{AuctionData, ReserveConfig, UserPositions},
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use ed25519_dalek::SigningKey;
-use rusqlite::{params, Connection};
 use soroban_fixed_point_math::FixedPoint;
 use soroban_rpc::Client;
 use soroban_spec_tools::from_string_primitive;
@@ -310,10 +309,6 @@ pub fn sum_adj_asset_values(
     for (asset, amount) in assets.iter() {
         let price = db_manager.get_asset_price(&asset)?;
         let config = db_manager.get_reserve_config_from_asset(pool, asset)?;
-        println!(
-            "asset: {:?}, amount: {:?}, collateral: {:?}",
-            asset, amount, collateral
-        );
         let (raw_val, adj_val) = calc_position_value(config, price, *amount, collateral);
         value += raw_val;
         adjusted_value += adj_val;
@@ -331,7 +326,6 @@ fn calc_position_value(
     let modifiers: (i128, i128) = if collateral {
         (config.est_b_rate, config.collateral_factor as i128)
     } else {
-        println!("config: {:?}", config);
         (
             config.est_d_rate,
             1e14 as i128 / config.liability_factor as i128,
@@ -430,7 +424,7 @@ pub async fn bstop_token_to_usdc(
     backstop: Hash,
     lp_amount: i128,
     usdc_address: Hash,
-) -> Result<i128, ()> {
+) -> Result<i128> {
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
 
@@ -442,12 +436,10 @@ pub async fn bstop_token_to_usdc(
                 function_name: ScSymbol::try_from("wdr_tokn_amt_in_get_lp_tokns_out").unwrap(),
                 args: VecM::try_from(vec![
                     ScVal::Address(ScAddress::Contract(usdc_address.clone())),
-                    from_string_primitive(lp_amount.to_string().as_str(), &ScSpecTypeDef::I128)
-                        .unwrap(),
-                    from_string_primitive("0".to_string().as_str(), &ScSpecTypeDef::I128).unwrap(),
+                    from_string_primitive(lp_amount.to_string().as_str(), &ScSpecTypeDef::I128)?,
+                    from_string_primitive("0".to_string().as_str(), &ScSpecTypeDef::I128)?,
                     ScVal::Address(ScAddress::Contract(backstop)),
-                ])
-                .unwrap(),
+                ])?,
             }),
             auth: VecM::default(),
         }),
@@ -470,7 +462,7 @@ pub async fn bstop_token_to_usdc(
     let usdc_out = match sim_result {
         Ok(sim_result) => {
             let contract_function_result =
-                ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none()).unwrap();
+                ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
             match &contract_function_result {
                 ScVal::I128(value) => Some(value.into()),
                 _ => None,
@@ -479,12 +471,8 @@ pub async fn bstop_token_to_usdc(
         Err(_) => {
             error!("Error: failed to simulate backstop token USDC withdrawal - using balance method instead");
             let total_comet_usdc =
-                get_balance(rpc, bstop_tkn_address.clone(), usdc_address.clone(), true)
-                    .await
-                    .unwrap();
-            let total_comet_tokens = total_comet_tokens(rpc, bstop_tkn_address.clone())
-                .await
-                .unwrap();
+                get_balance(rpc, bstop_tkn_address.clone(), usdc_address.clone(), true).await?;
+            let total_comet_tokens = total_comet_tokens(rpc, bstop_tkn_address.clone()).await?;
             Some(
                 total_comet_usdc
                     .fixed_div_floor(total_comet_tokens, SCALAR_7)
@@ -506,8 +494,7 @@ pub async fn get_balance(rpc: &Client, user: Hash, asset: Hash, is_contract: boo
         contract_id: asset.clone(),
         signing_key: key.clone(),
     }
-    .get_balance(&user, is_contract)
-    .unwrap();
+    .get_balance(&user, is_contract);
     let transaction: TransactionEnvelope = TransactionEnvelope::Tx(TransactionV1Envelope {
         tx: Transaction {
             source_account: MuxedAccount::Ed25519(Uint256(key.verifying_key().to_bytes())),
@@ -522,7 +509,7 @@ pub async fn get_balance(rpc: &Client, user: Hash, asset: Hash, is_contract: boo
     });
     let sim_result = rpc.simulate_transaction(&transaction).await?;
     let contract_function_result =
-        ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none()).unwrap();
+        ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
     let mut balance: i128 = 0;
     match &contract_function_result {
         ScVal::Map(data_map) => {
@@ -541,7 +528,7 @@ pub async fn get_balance(rpc: &Client, user: Hash, asset: Hash, is_contract: boo
 }
 
 // Gets total comet tokens
-pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: Hash) -> Result<i128, ()> {
+pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: Hash) -> Result<i128> {
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
 
@@ -551,7 +538,7 @@ pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: Hash) -> Result
             host_function: stellar_xdr::curr::HostFunction::InvokeContract(InvokeContractArgs {
                 contract_address: ScAddress::Contract(bstop_tkn_address.clone()),
                 function_name: ScSymbol::try_from("get_total_supply").unwrap(),
-                args: VecM::try_from(vec![]).unwrap(),
+                args: VecM::try_from(vec![])?,
             }),
             auth: VecM::default(),
         }),
@@ -570,22 +557,13 @@ pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: Hash) -> Result
         },
         signatures: VecM::default(),
     });
-    let sim_result = rpc.simulate_transaction(&transaction).await;
-    let total_tokens = match sim_result {
-        Ok(sim_result) => {
-            let contract_function_result =
-                ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none()).unwrap();
-            match &contract_function_result {
-                ScVal::I128(value) => Some(value.into()),
-                _ => None,
-            }
-        }
-        Err(_) => {
-            panic!("Error: Could not get total backstop tokens");
-        }
+    let sim_result = rpc.simulate_transaction(&transaction).await?;
+    let contract_function_result =
+        ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
+    match &contract_function_result {
+        ScVal::I128(value) => return Ok(value.into()),
+        _ => return Err(Error::msg("Error: failed to get total comet tokens")),
     };
-
-    return Ok(total_tokens.unwrap());
 }
 
 pub fn update_rate(numerator: i128, denominator: i128) -> Result<i128> {
@@ -597,46 +575,6 @@ pub fn update_rate(numerator: i128, denominator: i128) -> Result<i128> {
         error!("Error: rate exceeds maximum value");
     }
     return Ok(rate);
-}
-
-pub fn populate_db(db: &Connection, assets: &Vec<Hash>) -> Result<(), rusqlite::Error> {
-    db.execute(
-        "CREATE table if not exists asset_prices (
-            address string primary key,
-            price integer not null
-         )",
-        [],
-    )?;
-    db.execute(
-        "create table if not exists pool_asset_data (
-            key string primary key,
-            pool_address string not null,
-            address string not null,
-            asset_index integer not null,
-            dRate integer not null,
-            bRate integer not null,
-            collateralFactor integer not null,
-            liabilityFactor integer not null,
-            scalar integer not null
-         )",
-        [],
-    )?;
-
-    let placeholder_int = 1i64;
-    for asset in assets.clone() {
-        let asset_str = ScAddress::Contract(asset).to_string();
-        let result = db.execute(
-            "INSERT INTO asset_prices (address, price) VALUES (?, ?)",
-            params![asset_str, placeholder_int],
-        );
-        match result {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::ConstraintViolation => {}
-            Err(err) => error!("Error inserting price: {}", err),
-        }
-    }
-    Ok(())
 }
 
 pub async fn get_asset_prices_db(
@@ -654,7 +592,7 @@ pub async fn get_asset_prices_db(
             contract_id: oracle_id.clone(),
             signing_key: key.clone(),
         };
-        let op = tx_builder.get_last_price(asset).unwrap();
+        let op = tx_builder.get_last_price(asset);
         let transaction: TransactionEnvelope = TransactionEnvelope::Tx(TransactionV1Envelope {
             tx: Transaction {
                 source_account: MuxedAccount::Ed25519(Uint256(key.verifying_key().to_bytes())),
@@ -669,7 +607,7 @@ pub async fn get_asset_prices_db(
         });
         let sim_result = rpc.simulate_transaction(&transaction).await?;
         let contract_function_result =
-            ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none()).unwrap();
+            ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
         let mut price: i128 = 0;
         match &contract_function_result {
             ScVal::Map(data_map) => {
@@ -687,11 +625,6 @@ pub async fn get_asset_prices_db(
         }
         // adjust price to seven decimals
         price = price * SCALAR_7 / (10 as i128).pow(*oracle_decimals);
-        println!(
-            "price: {:?} asset: {:?}",
-            price,
-            ScAddress::Contract(asset.clone())
-        );
         db_manager.set_asset_price(asset.clone(), price)?;
     }
     Ok(())
@@ -709,24 +642,18 @@ pub async fn get_reserve_config_db(
         for asset in assets {
             let asset_id = ScVal::Address(ScAddress::Contract(asset.clone()));
 
-            let reserve_config_key = ScVal::Vec(Some(
-                ScVec::try_from(vec![
-                    ScVal::Symbol(ScSymbol::from(ScSymbol::from(
-                        StringM::from_str("ResConfig").unwrap(),
-                    ))),
-                    asset_id.clone(),
-                ])
-                .unwrap(),
-            ));
-            let reserve_data_key = ScVal::Vec(Some(
-                ScVec::try_from(vec![
-                    ScVal::Symbol(ScSymbol::from(ScSymbol::from(
-                        StringM::from_str("ResData").unwrap(),
-                    ))),
-                    asset_id,
-                ])
-                .unwrap(),
-            ));
+            let reserve_config_key = ScVal::Vec(Some(ScVec::try_from(vec![
+                ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                    "ResConfig",
+                )?))),
+                asset_id.clone(),
+            ])?));
+            let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
+                ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                    "ResData",
+                )?))),
+                asset_id,
+            ])?));
             let reserve_config_ledger_key =
                 stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
                     contract: ScAddress::Contract(pool.clone()),
@@ -743,10 +670,10 @@ pub async fn get_reserve_config_db(
             ledger_keys.push(reserve_data_ledger_key);
         }
 
-        let result = rpc.get_ledger_entries(&ledger_keys).await.unwrap();
+        let result = rpc.get_ledger_entries(&ledger_keys).await?;
         if let Some(entries) = result.entries {
             for entry in entries {
-                let value = LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
+                let value = LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none())?;
                 match &value {
                     LedgerEntryData::ContractData(data) => {
                         let key = decode_entry_key(&data.key);

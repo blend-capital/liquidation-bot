@@ -7,6 +7,7 @@ use soroban_spec_tools::from_string_primitive;
 
 use crate::{
     db_manager::DbManager,
+    error_logger::log_error,
     helper::{
         decode_scaddress_to_hash, evaluate_user, get_asset_prices_db, get_reserve_config_db,
         update_rate, user_positions_from_ledger_entry,
@@ -18,7 +19,7 @@ use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
 use soroban_cli::utils::contract_id_from_str;
 use soroban_rpc::{Client, Event as SorobanEvent};
-use std::{collections::HashMap, str::FromStr, vec};
+use std::{collections::HashMap, str::FromStr, thread::sleep, time::Duration, vec};
 use stellar_xdr::curr::{
     AccountId, Hash, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
     ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, Uint256, VecM,
@@ -102,68 +103,87 @@ impl Strategy<Event, Action> for BlendAuctioneer {
 
     // Process incoming events
     async fn process_event(&mut self, event: Event) -> Vec<Action> {
-        let mut actions: Vec<Action> = [].to_vec();
-
-        match event {
-            Event::SorobanEvents(events) => {
-                let events = *events;
-                let mut retry_counter = 0;
-                while retry_counter < 100 {
-                    let result = self
-                        .process_soroban_events(events, &mut actions, retry_counter)
-                        .await;
+        let mut retry_counter = 0;
+        while retry_counter < 100 {
+            match event {
+                Event::SorobanEvents(ref soroban_event) => {
+                    let event = *soroban_event.clone();
+                    let result = self.process_soroban_events(event.clone()).await;
                     match result {
                         Ok(actions) => return actions,
                         Err(e) => {
                             retry_counter += 1;
                             info!("retrying soroban event processing");
+                            if retry_counter == 100 {
+                                let log = format!(
+                                    "failed to process soroban event: {:?} with error: {}",
+                                    event.clone(),
+                                    e
+                                );
+                                log_error(&log).unwrap();
+                            }
+                            sleep(Duration::from_millis(500));
+                        }
+                    }
+                }
+                Event::NewBlock(ref block) => {
+                    let result = self.process_new_block_event(*block.clone()).await;
+                    match result {
+                        Ok(actions) => return actions,
+                        Err(e) => {
+                            retry_counter += 1;
+                            info!("retrying new block event processing");
+                            if retry_counter == 100 {
+                                let log = format!(
+                                    "failed to process new block event: {:?} with error: {}",
+                                    block.clone(),
+                                    e
+                                );
+                                log_error(&log).unwrap();
+                            }
+                            sleep(Duration::from_millis(500));
                         }
                     }
                 }
             }
-            Event::NewBlock(block) => {
-                self.process_new_block_event(*block, &mut actions).await;
-            }
         }
-        actions
+        return Vec::new();
     }
 }
 
 impl BlendAuctioneer {
     // Process new orders as they come in.
-    async fn process_soroban_events(
-        &mut self,
-        event: SorobanEvent,
-        actions: &mut Vec<Action>,
-        retry_count: u32,
-    ) -> Result<Vec<Action>> {
+    async fn process_soroban_events(&mut self, event: SorobanEvent) -> Result<Vec<Action>> {
+        let mut actions = Vec::new();
         //should build pending auctions and remove or modify pending auctions that are filled or partially filled by someone else
-        let pool_id = Hash(contract_id_from_str(&event.contract_id).unwrap());
+        let pool_id = Hash(contract_id_from_str(&event.contract_id)?);
         let mut name: String = Default::default();
         //Get contract function name from topics
-        let topic = ScVal::from_xdr_base64(event.topic[0].as_bytes(), Limits::none()).unwrap();
+        let topic = ScVal::from_xdr_base64(event.topic[0].as_bytes(), Limits::none())?;
         match topic {
             ScVal::Symbol(function_name) => {
                 name = function_name.0.to_string();
             }
             _ => (),
         }
-        let data = ScVal::from_xdr_base64(event.value.as_bytes(), Limits::none()).unwrap();
+        let data = ScVal::from_xdr_base64(event.value.as_bytes(), Limits::none())?;
         //Deserialize event body cases
         match name.as_str() {
             "new_liquidation_auction" => {
-                let user = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
+                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 // remove user from users list since they are being liquidated
                 self.users.entry(pool_id.clone()).or_default().remove(&user);
             }
             "delete_liquidation_auction" => {
                 // If this was an auction we were planning on filling, remove it from the pending list
-                let user = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
+                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 // add user back to users
                 self.get_user_position(pool_id.clone(), user.clone())
@@ -171,11 +191,12 @@ impl BlendAuctioneer {
                     .unwrap();
             }
             "fill_auction" => {
-                let liquidated_id = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
+                let liquidated_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
                 let mut auction_type = 0;
-                match ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none()).unwrap() {
+                match ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())? {
                     ScVal::U32(num) => {
                         auction_type = num;
                     }
@@ -200,8 +221,7 @@ impl BlendAuctioneer {
                     // add user back to positions
                     let score = self
                         .get_user_position(pool_id.clone(), liquidated_id.clone())
-                        .await
-                        .unwrap();
+                        .await?;
                     //check if a bad debt call is necessary
                     if score.is_some() && score.unwrap() != 1 {
                         let action = self.act_on_score(&liquidated_id, &pool_id, score.unwrap());
@@ -212,9 +232,10 @@ impl BlendAuctioneer {
                 }
             }
             "bad_debt" => {
-                let user = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
+                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
                 // remove user from users list since their positions were removed
                 self.users.entry(pool_id.clone()).or_default().remove(&user);
                 let tx_builder = BlendTxBuilder {
@@ -222,7 +243,7 @@ impl BlendAuctioneer {
                     signing_key: self.us.clone(),
                 };
                 actions.push(Action::SubmitTx(SubmitStellarTx {
-                    op: tx_builder.new_bad_debt_auction().unwrap(),
+                    op: tx_builder.new_bad_debt_auction(),
                     gas_bid_info: None,
                     signing_key: self.us.clone(),
                 }));
@@ -247,13 +268,13 @@ impl BlendAuctioneer {
                 }
                 // Update the reserve config for the pool
                 get_reserve_config_db(&self.rpc, &vec![pool_id], &vec![asset_id], &self.db_manager)
-                    .await
-                    .unwrap();
+                    .await?;
             }
             "supply" => {
-                let asset_id = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
+                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 let b_tokens_minted: i128 = match &data {
                     ScVal::Vec(vec) => {
@@ -284,30 +305,31 @@ impl BlendAuctioneer {
                     _ => 0,
                 };
                 if supply_amount == 0 || b_tokens_minted == 0 {
-                    return Ok(None::<Vec<Action>>);
+                    return Ok(Vec::new());
                 }
                 // Update reserve estimated b rate by using request.amount/b_tokens_minted from the emitted event
                 let new_rate = update_rate(supply_amount, b_tokens_minted);
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
-                            .unwrap();
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
-                    Err(_) => get_reserve_config_db(
-                        &self.rpc,
-                        &vec![pool_id],
-                        &vec![asset_id],
-                        &self.db_manager,
-                    )
-                    .await
-                    .unwrap(),
+                    Err(_) => {
+                        get_reserve_config_db(
+                            &self.rpc,
+                            &vec![pool_id],
+                            &vec![asset_id],
+                            &self.db_manager,
+                        )
+                        .await?
+                    }
                 }
             }
             "withdraw" => {
-                let asset_id = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
+                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
                 let b_tokens_burned: i128 = match &data {
                     ScVal::Vec(vec) => {
                         if let Some(vec) = vec {
@@ -337,24 +359,24 @@ impl BlendAuctioneer {
                     _ => 0,
                 };
                 if withdraw_amount == 0 || b_tokens_burned == 0 {
-                    return None::<Vec<Action>>;
+                    return Ok(Vec::new());
                 }
                 // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
                 let new_rate = update_rate(withdraw_amount, b_tokens_burned);
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
-                            .unwrap();
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
-                    Err(_) => get_reserve_config_db(
-                        &self.rpc,
-                        &vec![pool_id],
-                        &vec![asset_id],
-                        &self.db_manager,
-                    )
-                    .await
-                    .unwrap(),
+                    Err(_) => {
+                        get_reserve_config_db(
+                            &self.rpc,
+                            &vec![pool_id],
+                            &vec![asset_id],
+                            &self.db_manager,
+                        )
+                        .await?
+                    }
                 }
             }
             "supply_collateral" => {
@@ -395,11 +417,10 @@ impl BlendAuctioneer {
                 };
 
                 if supply_amount == 0 || b_tokens_minted == 0 {
-                    return None::<Vec<Action>>;
+                    return Ok(Vec::new());
                 }
                 self.update_user(&pool_id, &user, &asset_id, b_tokens_minted, true)
-                    .await
-                    .unwrap();
+                    .await?;
 
                 // Update reserve's estimated b rate by using request.amount/b_tokens_minted from the emitted event
 
@@ -407,26 +428,28 @@ impl BlendAuctioneer {
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
-                            .unwrap();
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
-                    Err(_) => get_reserve_config_db(
-                        &self.rpc,
-                        &vec![pool_id],
-                        &vec![asset_id],
-                        &self.db_manager,
-                    )
-                    .await
-                    .unwrap(),
+                    Err(_) => {
+                        get_reserve_config_db(
+                            &self.rpc,
+                            &vec![pool_id],
+                            &vec![asset_id],
+                            &self.db_manager,
+                        )
+                        .await?
+                    }
                 }
             }
             "withdraw_collateral" => {
-                let asset_id = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
-                let user = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none()).unwrap(),
-                );
+                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
+                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[2].as_bytes(),
+                    Limits::none(),
+                )?);
                 let withdraw_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
                         if let Some(vec) = vec {
@@ -457,12 +480,11 @@ impl BlendAuctioneer {
                 };
 
                 if withdraw_amount == 0 || b_tokens_burned == 0 {
-                    return None::<Vec<Action>>;
+                    return Ok(Vec::new());
                 }
                 // Update users collateral positions
                 self.update_user(&pool_id, &user, &asset_id, -b_tokens_burned, true)
-                    .await
-                    .unwrap();
+                    .await?;
 
                 // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
 
@@ -470,26 +492,28 @@ impl BlendAuctioneer {
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
-                            .unwrap();
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
-                    Err(_) => get_reserve_config_db(
-                        &self.rpc,
-                        &vec![pool_id],
-                        &vec![asset_id],
-                        &self.db_manager,
-                    )
-                    .await
-                    .unwrap(),
+                    Err(_) => {
+                        get_reserve_config_db(
+                            &self.rpc,
+                            &vec![pool_id],
+                            &vec![asset_id],
+                            &self.db_manager,
+                        )
+                        .await?
+                    }
                 }
             }
             "borrow" => {
-                let asset_id = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
-                let user = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none()).unwrap(),
-                );
+                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
+                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[2].as_bytes(),
+                    Limits::none(),
+                )?);
                 let borrow_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
                         if let Some(vec) = vec {
@@ -519,39 +543,40 @@ impl BlendAuctioneer {
                     _ => 0,
                 };
                 if borrow_amount == 0 || d_token_burned == 0 {
-                    return None::<Vec<Action>>;
+                    return Ok(Vec::new());
                 }
 
                 // Update users liability positions
                 self.update_user(&pool_id, &user, &asset_id, d_token_burned, false)
-                    .await
-                    .unwrap();
+                    .await?;
 
                 // Update reserve estimated b rate by using request.amount/d tokens minted from the emitted event
                 let new_rate = update_rate(borrow_amount, d_token_burned);
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
-                            .unwrap();
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
-                    Err(_) => get_reserve_config_db(
-                        &self.rpc,
-                        &vec![pool_id],
-                        &vec![asset_id],
-                        &self.db_manager,
-                    )
-                    .await
-                    .unwrap(),
+                    Err(_) => {
+                        get_reserve_config_db(
+                            &self.rpc,
+                            &vec![pool_id],
+                            &vec![asset_id],
+                            &self.db_manager,
+                        )
+                        .await?
+                    }
                 }
             }
             "repay" => {
-                let asset_id = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
-                let user = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none()).unwrap(),
-                );
+                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
+                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[2].as_bytes(),
+                    Limits::none(),
+                )?);
                 let repay_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
                         if let Some(vec) = vec {
@@ -582,52 +607,47 @@ impl BlendAuctioneer {
                 };
 
                 if repay_amount == 0 || d_token_burned == 0 {
-                    return Ok(None::<Vec<Action>>);
+                    return Ok(Vec::new());
                 }
                 // Update users liability positions
                 self.update_user(&pool_id, &user, &asset_id, -d_token_burned, false)
-                    .await
-                    .unwrap();
+                    .await?;
                 // Update reserve estimated d rate by using request.amount/d tokens burnt from the emitted event
 
                 let new_rate = update_rate(repay_amount, d_token_burned);
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
-                            .unwrap();
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
-                    Err(_) => get_reserve_config_db(
-                        &self.rpc,
-                        &vec![pool_id],
-                        &vec![asset_id],
-                        &self.db_manager,
-                    )
-                    .await
-                    .unwrap(),
+                    Err(_) => {
+                        get_reserve_config_db(
+                            &self.rpc,
+                            &vec![pool_id],
+                            &vec![asset_id],
+                            &self.db_manager,
+                        )
+                        .await?
+                    }
                 }
             }
             //if oracle has events they can be handled here
             _ => (),
         }
         if actions.len() > 0 {
-            return Some(actions.to_vec());
+            return Ok(actions.to_vec());
         }
-        None::<Vec<Action>>
+        Ok(Vec::new())
     }
 
     /// Process new block events, updating the internal state.
-    async fn process_new_block_event(
-        &mut self,
-        event: NewBlock,
-        actions: &mut Vec<Action>,
-    ) -> Option<Vec<Action>> {
+    async fn process_new_block_event(&mut self, event: NewBlock) -> Result<Vec<Action>> {
+        let mut actions = Vec::new();
         //TEMP: check if liquidations are possible every 100 blocks since we're not getting oracle update events atm
         if event.number % 100 == 0 {
             info!("on block: {} ", event.number);
         }
         if event.number % 10 == 0 {
-            println!("Should be checking users on block: {} ", event.number);
             get_asset_prices_db(
                 &self.rpc,
                 &self.oracle_id,
@@ -635,15 +655,11 @@ impl BlendAuctioneer {
                 &self.assets,
                 &self.db_manager,
             )
-            .await
-            .unwrap();
+            .await?;
             for pool in self.pools.iter() {
-                println!("checking pool: {:?}", pool);
                 for users in self.users.get(pool).iter_mut() {
-                    println!("{:?}", users);
                     for user in users.iter() {
-                        println!("{:?}", user);
-                        let score = evaluate_user(pool, user.1, &self.db_manager).unwrap();
+                        let score = evaluate_user(pool, user.1, &self.db_manager)?;
                         // create liquidation auction if needed
                         let action = self.act_on_score(&user.0, &pool, score);
                         if action.is_some() {
@@ -658,25 +674,18 @@ impl BlendAuctioneer {
             }
         }
 
-        if actions.len() > 0 {
-            return Some(actions.to_vec());
-        }
-
-        None
+        return Ok(actions);
     }
 
     async fn get_user_position(&mut self, pool_id: Hash, user_id: Hash) -> Result<Option<u64>> {
-        let reserve_data_key = ScVal::Vec(Some(
-            ScVec::try_from(vec![
-                ScVal::Symbol(ScSymbol::from(ScSymbol::from(
-                    StringM::from_str("Positions").unwrap(),
-                ))),
-                ScVal::Address(ScAddress::Account(AccountId(
-                    PublicKey::PublicKeyTypeEd25519(Uint256(user_id.0)),
-                ))),
-            ])
-            .unwrap(),
-        ));
+        let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
+            ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                "Positions",
+            )?))),
+            ScVal::Address(ScAddress::Account(AccountId(
+                PublicKey::PublicKeyTypeEd25519(Uint256(user_id.0)),
+            ))),
+        ])?));
         let position_ledger_key =
             stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
                 contract: ScAddress::Contract(pool_id.clone()),
@@ -686,12 +695,11 @@ impl BlendAuctioneer {
         let result = self
             .rpc
             .get_ledger_entries(&vec![position_ledger_key])
-            .await
-            .unwrap();
+            .await?;
         if let Some(entries) = result.entries {
             for entry in entries {
                 let value: LedgerEntryData =
-                    LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
+                    LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none())?;
 
                 match &value {
                     LedgerEntryData::ContractData(data) => {
@@ -731,22 +739,18 @@ impl BlendAuctioneer {
                 ScVal::Symbol(ScSymbol::from(ScSymbol::from(
                     StringM::from_str("Auction").unwrap(),
                 ))),
-                ScVal::Map(Some(ScMap(
-                    VecM::try_from(vec![
-                        ScMapEntry {
-                            key: from_string_primitive("auct_type", &ScSpecTypeDef::Symbol)
-                                .unwrap(),
-                            val: from_string_primitive("0", &ScSpecTypeDef::U32).unwrap(),
-                        },
-                        ScMapEntry {
-                            key: from_string_primitive("user", &ScSpecTypeDef::Symbol).unwrap(),
-                            val: ScVal::Address(ScAddress::Account(AccountId(
-                                PublicKey::PublicKeyTypeEd25519(Uint256(user.0.clone())),
-                            ))),
-                        },
-                    ])
-                    .unwrap(),
-                ))),
+                ScVal::Map(Some(ScMap(VecM::try_from(vec![
+                    ScMapEntry {
+                        key: from_string_primitive("auct_type", &ScSpecTypeDef::Symbol)?,
+                        val: from_string_primitive("0", &ScSpecTypeDef::U32)?,
+                    },
+                    ScMapEntry {
+                        key: from_string_primitive("user", &ScSpecTypeDef::Symbol)?,
+                        val: ScVal::Address(ScAddress::Account(AccountId(
+                            PublicKey::PublicKeyTypeEd25519(Uint256(user.0.clone())),
+                        ))),
+                    },
+                ])?))),
             ])
             .unwrap(),
         ));
@@ -759,12 +763,11 @@ impl BlendAuctioneer {
         let result = self
             .rpc
             .get_ledger_entries(&vec![position_ledger_key])
-            .await
-            .unwrap();
+            .await?;
         if let Some(entries) = result.entries {
             for entry in entries {
                 let value: LedgerEntryData =
-                    LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
+                    LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none())?;
 
                 match &value {
                     LedgerEntryData::ContractData(_) => {
@@ -790,7 +793,7 @@ impl BlendAuctioneer {
         if score == 0 {
             // Code to execute if the value is None
             return Some(Action::SubmitTx(SubmitStellarTx {
-                op: tx_builder.bad_debt(user.clone()).unwrap(),
+                op: tx_builder.bad_debt(user.clone()),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
             }));
@@ -799,9 +802,7 @@ impl BlendAuctioneer {
         if score > 2 {
             // Code to execute if the value is None
             return Some(Action::SubmitTx(SubmitStellarTx {
-                op: tx_builder
-                    .new_liquidation_auction(user.clone(), score)
-                    .unwrap(),
+                op: tx_builder.new_liquidation_auction(user.clone(), score),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
             }));
@@ -841,8 +842,7 @@ impl BlendAuctioneer {
         } else if (collateral && amount < 0) || (!collateral && amount > 0) {
             // User's borrowing power is going down so we should potentially add them
             self.get_user_position(pool_id.clone(), user_id.clone())
-                .await
-                .unwrap();
+                .await?;
         }
         Ok(())
     }
