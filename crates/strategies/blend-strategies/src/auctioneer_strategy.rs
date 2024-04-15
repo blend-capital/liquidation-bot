@@ -5,17 +5,17 @@ use artemis_core::{
 };
 use soroban_spec_tools::from_string_primitive;
 
-use async_trait::async_trait;
-use blend_utilities::{
+use crate::{
+    db_manager::DbManager,
     helper::{
-        db_path, decode_scaddress_to_hash, evaluate_user, get_asset_prices_db,
-        get_reserve_config_db, populate_db, update_rate, user_positions_from_ledger_entry,
+        decode_scaddress_to_hash, evaluate_user, get_asset_prices_db, get_reserve_config_db,
+        update_rate, user_positions_from_ledger_entry,
     },
     transaction_builder::BlendTxBuilder,
     types::{Action, Config, Event, UserPositions},
 };
+use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
-use rusqlite::Connection;
 use soroban_cli::utils::contract_id_from_str;
 use soroban_rpc::{Client, Event as SorobanEvent};
 use std::{collections::HashMap, str::FromStr, vec};
@@ -28,6 +28,8 @@ use tracing::info;
 pub struct BlendAuctioneer {
     /// Soroban RPC client for interacting with chain
     rpc: Client,
+    /// The path to the database directory
+    db_manager: DbManager,
     /// Assets in pools
     assets: Vec<Hash>,
     /// Vec of Blend pool addresses to create auctions for
@@ -52,20 +54,21 @@ pub struct BlendAuctioneer {
 impl BlendAuctioneer {
     pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
-        let db = Connection::open(db_path("blend_assets.db"))?;
-        populate_db(&db, &config.assets)?;
-        db.close().unwrap();
+        let db_manager = DbManager::new(config.db_path.clone());
+        db_manager.initialize(&config.assets)?;
 
         get_asset_prices_db(
             &client,
             &config.oracle_id,
             &config.oracle_decimals,
             &config.assets,
+            &db_manager,
         )
         .await?;
-        get_reserve_config_db(&client, &config.pools, &config.assets).await?;
+        get_reserve_config_db(&client, &config.pools, &config.assets, &db_manager).await?;
         Ok(Self {
             rpc: client,
+            db_manager: DbManager::new(config.db_path.clone()),
             assets: config.assets.clone(),
             pools: config.pools.clone(),
             users: HashMap::new(),
@@ -81,49 +84,18 @@ impl BlendAuctioneer {
 #[async_trait]
 impl Strategy<Event, Action> for BlendAuctioneer {
     async fn sync_state(&mut self) -> Result<()> {
-        // TODO: maybe updated missed users since last block this was run on
-
-        let db = Connection::open(db_path("blend_users.db"))?;
-        db.execute(
-            "create table if not exists users (
-            id integer primary key,
-            address string not null unique
-         )",
-            [],
-        )?;
-
-        let last_row = 100000; //must be manually inputted for now
-        for i in 1..last_row {
-            let row = db.query_row("SELECT address FROM users WHERE id = ?1", [i], |row| {
-                row.get::<_, String>(0)
-            });
-            let user = match row {
-                Ok(user) => user,
-                Err(_) => {
-                    break;
-                }
-            };
-
-            let user_hash = Hash(
-                stellar_strkey::ed25519::PublicKey::from_string(&user)
-                    .unwrap()
-                    .0,
-            );
-
+        let users = self.db_manager.get_users()?;
+        for user in users {
             for pool in self.pools.clone() {
                 if self
-                    .user_has_liquidation(pool.clone(), user_hash.clone())
+                    .user_has_liquidation(pool.clone(), user.clone())
                     .await?
                 {
                     continue;
                 }
-                self.get_user_position(pool.clone(), user_hash.clone())
-                    .await?;
+                self.get_user_position(pool.clone(), user.clone()).await?;
             }
         }
-
-        // connection needs to be closed for thread safety
-        db.close().unwrap();
         info!("synced auctioneer state");
         Ok(())
     }
@@ -131,10 +103,23 @@ impl Strategy<Event, Action> for BlendAuctioneer {
     // Process incoming events
     async fn process_event(&mut self, event: Event) -> Vec<Action> {
         let mut actions: Vec<Action> = [].to_vec();
+
         match event {
             Event::SorobanEvents(events) => {
                 let events = *events;
-                self.process_soroban_events(events, &mut actions).await;
+                let mut retry_counter = 0;
+                while retry_counter < 100 {
+                    let result = self
+                        .process_soroban_events(events, &mut actions, retry_counter)
+                        .await;
+                    match result {
+                        Ok(actions) => return actions,
+                        Err(e) => {
+                            retry_counter += 1;
+                            info!("retrying soroban event processing");
+                        }
+                    }
+                }
             }
             Event::NewBlock(block) => {
                 self.process_new_block_event(*block, &mut actions).await;
@@ -150,7 +135,8 @@ impl BlendAuctioneer {
         &mut self,
         event: SorobanEvent,
         actions: &mut Vec<Action>,
-    ) -> Option<Vec<Action>> {
+        retry_count: u32,
+    ) -> Result<Vec<Action>> {
         //should build pending auctions and remove or modify pending auctions that are filled or partially filled by someone else
         let pool_id = Hash(contract_id_from_str(&event.contract_id).unwrap());
         let mut name: String = Default::default();
@@ -260,7 +246,7 @@ impl BlendAuctioneer {
                     _ => (),
                 }
                 // Update the reserve config for the pool
-                get_reserve_config_db(&self.rpc, &vec![pool_id], &vec![asset_id])
+                get_reserve_config_db(&self.rpc, &vec![pool_id], &vec![asset_id], &self.db_manager)
                     .await
                     .unwrap();
             }
@@ -298,10 +284,25 @@ impl BlendAuctioneer {
                     _ => 0,
                 };
                 if supply_amount == 0 || b_tokens_minted == 0 {
-                    return None::<Vec<Action>>;
+                    return Ok(None::<Vec<Action>>);
                 }
                 // Update reserve estimated b rate by using request.amount/b_tokens_minted from the emitted event
-                update_rate(pool_id, asset_id, supply_amount, b_tokens_minted, true).unwrap();
+                let new_rate = update_rate(supply_amount, b_tokens_minted);
+                match new_rate {
+                    Ok(rate) => {
+                        self.db_manager
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
+                            .unwrap();
+                    }
+                    Err(_) => get_reserve_config_db(
+                        &self.rpc,
+                        &vec![pool_id],
+                        &vec![asset_id],
+                        &self.db_manager,
+                    )
+                    .await
+                    .unwrap(),
+                }
             }
             "withdraw" => {
                 let asset_id = decode_scaddress_to_hash(
@@ -339,7 +340,22 @@ impl BlendAuctioneer {
                     return None::<Vec<Action>>;
                 }
                 // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
-                update_rate(pool_id, asset_id, withdraw_amount, b_tokens_burned, true).unwrap();
+                let new_rate = update_rate(withdraw_amount, b_tokens_burned);
+                match new_rate {
+                    Ok(rate) => {
+                        self.db_manager
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
+                            .unwrap();
+                    }
+                    Err(_) => get_reserve_config_db(
+                        &self.rpc,
+                        &vec![pool_id],
+                        &vec![asset_id],
+                        &self.db_manager,
+                    )
+                    .await
+                    .unwrap(),
+                }
             }
             "supply_collateral" => {
                 let asset_id = decode_scaddress_to_hash(
@@ -386,7 +402,23 @@ impl BlendAuctioneer {
                     .unwrap();
 
                 // Update reserve's estimated b rate by using request.amount/b_tokens_minted from the emitted event
-                update_rate(pool_id, asset_id, supply_amount, b_tokens_minted, true).unwrap();
+
+                let new_rate = update_rate(supply_amount, b_tokens_minted);
+                match new_rate {
+                    Ok(rate) => {
+                        self.db_manager
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
+                            .unwrap();
+                    }
+                    Err(_) => get_reserve_config_db(
+                        &self.rpc,
+                        &vec![pool_id],
+                        &vec![asset_id],
+                        &self.db_manager,
+                    )
+                    .await
+                    .unwrap(),
+                }
             }
             "withdraw_collateral" => {
                 let asset_id = decode_scaddress_to_hash(
@@ -433,7 +465,23 @@ impl BlendAuctioneer {
                     .unwrap();
 
                 // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
-                update_rate(pool_id, asset_id, withdraw_amount, b_tokens_burned, true).unwrap();
+
+                let new_rate = update_rate(withdraw_amount, b_tokens_burned);
+                match new_rate {
+                    Ok(rate) => {
+                        self.db_manager
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
+                            .unwrap();
+                    }
+                    Err(_) => get_reserve_config_db(
+                        &self.rpc,
+                        &vec![pool_id],
+                        &vec![asset_id],
+                        &self.db_manager,
+                    )
+                    .await
+                    .unwrap(),
+                }
             }
             "borrow" => {
                 let asset_id = decode_scaddress_to_hash(
@@ -480,7 +528,22 @@ impl BlendAuctioneer {
                     .unwrap();
 
                 // Update reserve estimated b rate by using request.amount/d tokens minted from the emitted event
-                update_rate(pool_id, asset_id, borrow_amount, d_token_burned, false).unwrap();
+                let new_rate = update_rate(borrow_amount, d_token_burned);
+                match new_rate {
+                    Ok(rate) => {
+                        self.db_manager
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
+                            .unwrap();
+                    }
+                    Err(_) => get_reserve_config_db(
+                        &self.rpc,
+                        &vec![pool_id],
+                        &vec![asset_id],
+                        &self.db_manager,
+                    )
+                    .await
+                    .unwrap(),
+                }
             }
             "repay" => {
                 let asset_id = decode_scaddress_to_hash(
@@ -519,14 +582,30 @@ impl BlendAuctioneer {
                 };
 
                 if repay_amount == 0 || d_token_burned == 0 {
-                    return None::<Vec<Action>>;
+                    return Ok(None::<Vec<Action>>);
                 }
                 // Update users liability positions
                 self.update_user(&pool_id, &user, &asset_id, -d_token_burned, false)
                     .await
                     .unwrap();
                 // Update reserve estimated d rate by using request.amount/d tokens burnt from the emitted event
-                update_rate(pool_id, asset_id, repay_amount, d_token_burned, false).unwrap();
+
+                let new_rate = update_rate(repay_amount, d_token_burned);
+                match new_rate {
+                    Ok(rate) => {
+                        self.db_manager
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)
+                            .unwrap();
+                    }
+                    Err(_) => get_reserve_config_db(
+                        &self.rpc,
+                        &vec![pool_id],
+                        &vec![asset_id],
+                        &self.db_manager,
+                    )
+                    .await
+                    .unwrap(),
+                }
             }
             //if oracle has events they can be handled here
             _ => (),
@@ -548,18 +627,23 @@ impl BlendAuctioneer {
             info!("on block: {} ", event.number);
         }
         if event.number % 10 == 0 {
+            println!("Should be checking users on block: {} ", event.number);
             get_asset_prices_db(
                 &self.rpc,
                 &self.oracle_id,
                 &self.oracle_decimals,
                 &self.assets,
+                &self.db_manager,
             )
             .await
             .unwrap();
             for pool in self.pools.iter() {
+                println!("checking pool: {:?}", pool);
                 for users in self.users.get(pool).iter_mut() {
+                    println!("{:?}", users);
                     for user in users.iter() {
-                        let score = evaluate_user(pool, user.1).unwrap();
+                        println!("{:?}", user);
+                        let score = evaluate_user(pool, user.1, &self.db_manager).unwrap();
                         // create liquidation auction if needed
                         let action = self.act_on_score(&user.0, &pool, score);
                         if action.is_some() {
@@ -622,9 +706,10 @@ impl BlendAuctioneer {
                             }
                             _ => (),
                         }
-                        let user_position = user_positions_from_ledger_entry(&value, &pool_id)?;
+                        let user_position =
+                            user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager)?;
 
-                        let score = evaluate_user(&pool_id, &user_position)?;
+                        let score = evaluate_user(&pool_id, &user_position, &self.db_manager)?;
                         if score != 1 {
                             self.users
                                 .entry(pool_id.clone())
@@ -735,22 +820,7 @@ impl BlendAuctioneer {
         amount: i128,
         collateral: bool,
     ) -> Result<()> {
-        let db = Connection::open(db_path("blend_users.db"))?;
-        let public_key = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
-            user_id.0,
-        ))))
-        .to_string();
-
-        match db.execute(
-            "INSERT INTO users (address) VALUES (?1)",
-            [public_key.clone()],
-        ) {
-            Ok(_) => {
-                info!("Found new user: {}", public_key.clone());
-            }
-            Err(_) => {}
-        }
-        db.close().unwrap();
+        self.db_manager.add_user(user_id)?;
         let pool = self.users.entry(pool_id.clone()).or_default();
         if let Some(positions) = pool.get_mut(&user_id) {
             if collateral {
@@ -763,7 +833,7 @@ impl BlendAuctioneer {
 
             // user's borrowing power is going up so we should potentially drop them
             if (collateral && amount > 0) || (!collateral && amount < 0) {
-                let score = evaluate_user(&pool_id, &positions)?;
+                let score = evaluate_user(&pool_id, &positions, &self.db_manager)?;
                 if score == 1 {
                     pool.remove(&user_id);
                 }

@@ -1,4 +1,14 @@
 use crate::auction_manager::OngoingAuction;
+use crate::db_manager::DbManager;
+use crate::{
+    constants::SCALAR_7,
+    helper::{
+        bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_hash, get_balance,
+        user_positions_from_ledger_entry,
+    },
+    transaction_builder::{BlendTxBuilder, Request},
+    types::{Action, Config, Event, UserPositions},
+};
 use anyhow::Result;
 use artemis_core::executors::soroban_executor::GasBidInfo;
 use artemis_core::{
@@ -6,18 +16,8 @@ use artemis_core::{
     types::Strategy,
 };
 use async_trait::async_trait;
-use blend_utilities::constants::SCALAR_7;
-use blend_utilities::helper::{
-    bstop_token_to_usdc, db_path, decode_auction_data, decode_scaddress_to_hash, get_balance,
-    get_single_asset_price, populate_db, user_positions_from_ledger_entry,
-};
-use blend_utilities::{
-    transaction_builder::{BlendTxBuilder, Request},
-    types::{Action, Config, Event, UserPositions},
-};
 use core::panic;
 use ed25519_dalek::SigningKey;
-use rusqlite::Connection;
 use soroban_cli::utils::contract_id_from_str;
 use soroban_fixed_point_math::FixedPoint;
 use soroban_rpc::{Client, Event as SorobanEvent};
@@ -32,6 +32,8 @@ use tracing::info;
 pub struct BlendLiquidator {
     /// Soroban RPC client for interacting with chain
     rpc: Client,
+    /// The path to the db directory
+    db_manager: DbManager,
     /// Assets we're interested in
     assets: Vec<Hash>,
     /// Vec of Blend pool addresses to bid on auctions in
@@ -65,11 +67,11 @@ pub struct BlendLiquidator {
 impl BlendLiquidator {
     pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
-        let db = Connection::open(db_path("blend_assets.db"))?;
-        populate_db(&db, &config.assets)?;
-        db.close().unwrap();
+        let db_manager = DbManager::new(config.db_path.clone());
+        db_manager.initialize(&config.assets)?;
         Ok(Self {
             rpc: client,
+            db_manager,
             assets: config.assets.clone(),
             pools: config.pools.clone(),
             backstop_id: config.backstop.clone(),
@@ -129,29 +131,13 @@ impl Strategy<Event, Action> for BlendLiquidator {
             self.get_bad_debt_auction(pool.clone()).await?;
         }
         // Get all liquidations ongoing
-        let db = Connection::open(db_path("blend_users.db"))?;
-        let last_row = 1000;
-        for i in 1..last_row {
-            let row = db.query_row("SELECT address FROM users WHERE id = ?1", [i], |row| {
-                row.get::<_, String>(0)
-            });
-            let user = match row {
-                Ok(user) => user,
-                Err(_) => {
-                    break;
-                }
-            };
-            let user_hash = Hash(
-                stellar_strkey::ed25519::PublicKey::from_string(&user)
-                    .unwrap()
-                    .0,
-            );
+        let users = self.db_manager.get_users()?;
+        for user in users {
             for pool in self.pools.clone() {
-                self.get_user_liquidation(pool.clone(), user_hash.clone())
+                self.get_user_liquidation(pool.clone(), user.clone())
                     .await?;
             }
         }
-        db.close().unwrap();
 
         info!("done syncing state");
 
@@ -217,6 +203,7 @@ impl BlendLiquidator {
                         auction_data.clone(),
                         0,
                         self.required_profit,
+                        self.db_manager.clone(),
                     );
                     pending_fill
                         .calc_liquidation_fill(self.bankroll.get(&pool_id).unwrap(), self.min_hf)
@@ -256,6 +243,7 @@ impl BlendLiquidator {
                     auction_data.clone(),
                     auction_type,
                     self.required_profit,
+                    self.db_manager.clone(),
                 );
                 //Bad debt auction
                 // we only care about bid here
@@ -487,7 +475,9 @@ impl BlendLiquidator {
                             total_profit: profit
                                 .fixed_mul_floor(
                                     // We assume XLM price to be 15cents if it's not tracked by the oracle (you should track with oracle)
-                                    get_single_asset_price(&self.xlm_address).unwrap_or(150_0000),
+                                    self.db_manager
+                                        .get_asset_price(&self.xlm_address)
+                                        .unwrap_or(150_0000),
                                     SCALAR_7,
                                 )
                                 .unwrap(),
@@ -537,7 +527,8 @@ impl BlendLiquidator {
 
                 match &value {
                     LedgerEntryData::ContractData(_) => {
-                        let user_position = user_positions_from_ledger_entry(&value, &pool_id)?;
+                        let user_position =
+                            user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager)?;
 
                         self.bankroll.insert(pool_id.clone(), user_position.clone());
                     }
@@ -605,6 +596,7 @@ impl BlendLiquidator {
                                 auction_data.clone(),
                                 0,
                                 self.required_profit,
+                                self.db_manager.clone(),
                             );
                             pending_fill.calc_liquidation_fill(
                                 self.bankroll.get(&pool).unwrap(),
@@ -677,6 +669,7 @@ impl BlendLiquidator {
                                 auction_data.clone(),
                                 1,
                                 self.required_profit,
+                                self.db_manager.clone(),
                             );
                             let lot_value = bstop_token_to_usdc(
                                 &self.rpc,
@@ -757,6 +750,7 @@ impl BlendLiquidator {
                                 auction_data.clone(),
                                 2,
                                 self.required_profit,
+                                self.db_manager.clone(),
                             );
                             let bid_value = bstop_token_to_usdc(
                                 &self.rpc,

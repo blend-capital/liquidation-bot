@@ -1,8 +1,9 @@
 use core::panic;
-use std::{collections::HashMap, path::Path, str::FromStr};
+use std::{collections::HashMap, env, str::FromStr};
 
 use crate::{
     constants::{SCALAR_7, SCALAR_9},
+    db_manager::DbManager,
     transaction_builder::BlendTxBuilder,
     types::{AuctionData, ReserveConfig, UserPositions},
 };
@@ -21,7 +22,7 @@ use stellar_xdr::curr::{
 use tracing::error;
 
 pub fn db_path(db: &str) -> String {
-    if Path::new("/.dockerenv").exists() {
+    if env::var("RUNNING_DOCKER").is_ok() {
         let docker = "/opt/liquidation-bot/".to_owned();
         docker + db
     } else {
@@ -228,12 +229,12 @@ pub fn reserve_data_from_ledger_entry(ledger_entry_data: &LedgerEntryData) -> (i
 pub fn user_positions_from_ledger_entry(
     ledger_entry_data: &LedgerEntryData,
     pool: &Hash,
+    db_manager: &DbManager,
 ) -> Result<UserPositions> {
     let mut user_positions = UserPositions {
         collateral: HashMap::default(),
         liabilities: HashMap::default(),
     };
-    let db = Connection::open(db_path("blend_assets.db")).unwrap();
     match ledger_entry_data {
         LedgerEntryData::ContractData(data) => match &data.val {
             ScVal::Map(map) => {
@@ -248,10 +249,11 @@ pub fn user_positions_from_ledger_entry(
                                             match entry.key {
                                                 ScVal::U32(index) => {
                                                     user_positions.liabilities.insert(
-                                                        ReserveConfig::from_db_w_index(
-                                                            pool, &index, &db,
-                                                        )?
-                                                        .asset,
+                                                        db_manager
+                                                            .get_reserve_config_from_index(
+                                                                pool, &index,
+                                                            )?
+                                                            .asset,
                                                         decode_i128_to_native(&entry.val),
                                                     );
                                                 }
@@ -269,10 +271,11 @@ pub fn user_positions_from_ledger_entry(
                                             match entry.key {
                                                 ScVal::U32(index) => {
                                                     user_positions.collateral.insert(
-                                                        ReserveConfig::from_db_w_index(
-                                                            pool, &index, &db,
-                                                        )?
-                                                        .asset,
+                                                        db_manager
+                                                            .get_reserve_config_from_index(
+                                                                pool, &index,
+                                                            )?
+                                                            .asset,
                                                         decode_i128_to_native(&entry.val),
                                                     );
                                                 }
@@ -292,21 +295,7 @@ pub fn user_positions_from_ledger_entry(
         },
         _ => panic!("Error: expected LedgerEntryData to be ContractData"),
     }
-    db.close().unwrap();
     Ok(user_positions)
-}
-
-pub fn get_single_asset_price(asset: &Hash) -> Result<i128> {
-    let db = Connection::open(db_path("blend_assets.db")).unwrap();
-    let price_result = db.query_row(
-        "SELECT price FROM asset_prices WHERE address = ?",
-        [ScAddress::Contract(asset.clone()).to_string()],
-        |row| row.get::<_, isize>(0),
-    );
-    db.close().unwrap();
-    price_result
-        .map(|price| price as i128)
-        .map_err(|_| anyhow::anyhow!("Error: asset not found"))
 }
 
 // computes the value of reserve assets both before and after collateral or liability factors are applied
@@ -314,24 +303,21 @@ pub fn sum_adj_asset_values(
     assets: HashMap<Hash, i128>,
     pool: &Hash,
     collateral: bool,
+    db_manager: &DbManager,
 ) -> Result<(i128, i128)> {
-    let db = Connection::open(db_path("blend_assets.db")).unwrap();
     let mut value: i128 = 0;
     let mut adjusted_value: i128 = 0;
     for (asset, amount) in assets.iter() {
-        let price = db
-            .query_row(
-                "SELECT price FROM asset_prices WHERE address = ?",
-                [ScAddress::Contract(asset.clone()).to_string()],
-                |row| row.get::<_, isize>(0),
-            )
-            .unwrap() as i128;
-        let config = ReserveConfig::from_db_w_asset(pool, asset, &db).unwrap();
+        let price = db_manager.get_asset_price(&asset)?;
+        let config = db_manager.get_reserve_config_from_asset(pool, asset)?;
+        println!(
+            "asset: {:?}, amount: {:?}, collateral: {:?}",
+            asset, amount, collateral
+        );
         let (raw_val, adj_val) = calc_position_value(config, price, *amount, collateral);
         value += raw_val;
         adjusted_value += adj_val;
     }
-    db.close().unwrap();
     Ok((value, adjusted_value))
 }
 
@@ -345,6 +331,7 @@ fn calc_position_value(
     let modifiers: (i128, i128) = if collateral {
         (config.est_b_rate, config.collateral_factor as i128)
     } else {
+        println!("config: {:?}", config);
         (
             config.est_d_rate,
             1e14 as i128 / config.liability_factor as i128,
@@ -357,19 +344,39 @@ fn calc_position_value(
         .unwrap();
     let adj_val = raw_val.fixed_mul_floor(modifiers.1, SCALAR_7).unwrap();
     if collateral {
-        assert!(raw_val.gt(&adj_val))
+        assert!(
+            raw_val.gt(&adj_val),
+            "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
+            raw_val,
+            adj_val,
+            price,
+            amount,
+            config
+        )
     } else {
-        assert!(raw_val.lt(&adj_val))
+        assert!(
+            raw_val.lt(&adj_val),
+            "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
+            raw_val,
+            adj_val,
+            price,
+            amount,
+            config
+        )
     };
     (raw_val, adj_val)
 }
 
 // returns 0 if user should be ignored, 1 if user should be watched, a pct if user should be liquidated for the given pct
-pub fn evaluate_user(pool: &Hash, user_positions: &UserPositions) -> Result<u64> {
+pub fn evaluate_user(
+    pool: &Hash,
+    user_positions: &UserPositions,
+    db_manager: &DbManager,
+) -> Result<u64> {
     let (collateral_value, adj_collateral_value) =
-        sum_adj_asset_values(user_positions.collateral.clone(), pool, true)?;
+        sum_adj_asset_values(user_positions.collateral.clone(), pool, true, db_manager)?;
     let (liabilities_value, adj_liabilities_value) =
-        sum_adj_asset_values(user_positions.liabilities.clone(), pool, false)?;
+        sum_adj_asset_values(user_positions.liabilities.clone(), pool, false, db_manager)?;
     let remaining_power = adj_collateral_value - adj_liabilities_value;
 
     if adj_collateral_value == 0 && adj_liabilities_value > 0 {
@@ -581,45 +588,15 @@ pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: Hash) -> Result
     return Ok(total_tokens.unwrap());
 }
 
-pub fn update_rate(
-    pool_id: Hash,
-    asset_id: Hash,
-    numerator: i128,
-    denominator: i128,
-    b_rate: bool,
-) -> Result<(), (Connection, rusqlite::Error)> {
-    let db = Connection::open(db_path("blend_assets.db")).unwrap();
-
+pub fn update_rate(numerator: i128, denominator: i128) -> Result<i128> {
     let rate = numerator
         .fixed_div_floor(denominator, SCALAR_9)
         .unwrap_or(SCALAR_9 + 1);
     assert!(rate.gt(&1_000_0000));
-    let key = (ScAddress::Contract(asset_id.clone()).to_string()
-        + &ScAddress::Contract(pool_id.clone()).to_string())
-        .to_string();
-    if b_rate {
-        db.execute(
-            "UPDATE pool_asset_data SET bRate = ?1 WHERE key = ?2",
-            params![rate as u64, key,],
-        )
-        .unwrap()
-    } else {
-        db.execute(
-            "UPDATE pool_asset_data SET dRate = ?1 WHERE key = ?2",
-            params![rate as u64, key,],
-        )
-        .unwrap()
-    };
-    db.close()
-}
-
-pub fn pool_has_asset(pool: &Hash, asset: &String, db: &Connection) -> bool {
-    db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pool_asset_data WHERE key = ?1",
-        [ScAddress::Contract(pool.clone()).to_string() + &asset],
-        |row| row.get(0),
-    )
-    .unwrap()
+    if rate.gt(&1_000_0000) {
+        error!("Error: rate exceeds maximum value");
+    }
+    return Ok(rate);
 }
 
 pub fn populate_db(db: &Connection, assets: &Vec<Hash>) -> Result<(), rusqlite::Error> {
@@ -667,8 +644,8 @@ pub async fn get_asset_prices_db(
     oracle_id: &Hash,
     oracle_decimals: &u32,
     assets: &Vec<Hash>,
+    db_manager: &DbManager,
 ) -> Result<()> {
-    let db = Connection::open(db_path("blend_assets.db"))?;
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
     // get asset prices from oracle
@@ -710,15 +687,13 @@ pub async fn get_asset_prices_db(
         }
         // adjust price to seven decimals
         price = price * SCALAR_7 / (10 as i128).pow(*oracle_decimals);
-        db.execute(
-            "UPDATE asset_prices SET price = ?2 WHERE address = ?1",
-            [
-                ScAddress::Contract(asset.clone()).to_string(),
-                price.to_string(),
-            ],
-        )?;
+        println!(
+            "price: {:?} asset: {:?}",
+            price,
+            ScAddress::Contract(asset.clone())
+        );
+        db_manager.set_asset_price(asset.clone(), price)?;
     }
-    db.close().unwrap();
     Ok(())
 }
 
@@ -726,6 +701,7 @@ pub async fn get_reserve_config_db(
     rpc: &Client,
     pools: &Vec<Hash>,
     assets: &Vec<Hash>,
+    db_manager: &DbManager,
 ) -> Result<()> {
     let mut reserve_configs: HashMap<Hash, HashMap<Hash, ReserveConfig>> = HashMap::new();
     for pool in pools {
@@ -814,7 +790,6 @@ pub async fn get_reserve_config_db(
             }
         }
     }
-    let db = Connection::open(db_path("blend_assets.db"))?;
     for pool in pools {
         for asset in assets {
             let res_config = match reserve_configs.get(pool).unwrap().get(asset) {
@@ -824,27 +799,9 @@ pub async fn get_reserve_config_db(
                 }
             };
 
-            let pool_address_str = ScAddress::Contract(pool.clone()).to_string();
-            let asset_address_str = ScAddress::Contract(asset.clone()).to_string();
-            let db_key = (asset_address_str.clone() + &pool_address_str.clone()).to_string();
-            db.execute(
-                "INSERT OR REPLACE INTO pool_asset_data (key, bRate, dRate, asset_index, collateralFactor, liabilityFactor, scalar, pool_address, address) VALUES (?7, ?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9)",
-                params![
-                    res_config.est_b_rate as u64,
-                    res_config.est_d_rate as u64,
-                    res_config.index,
-                    res_config.collateral_factor,
-                    res_config.liability_factor,
-                    res_config.scalar as u64,
-                    db_key,
-                    pool_address_str,
-                    asset_address_str,
-                ],
-            )?;
+            db_manager.set_reserve_config(pool, asset, res_config)?;
         }
     }
-
-    db.close().unwrap();
     Ok(())
 }
 

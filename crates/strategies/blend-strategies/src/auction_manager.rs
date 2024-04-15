@@ -1,9 +1,10 @@
-use anyhow::Result;
-use blend_utilities::{
+use crate::{
     constants::SCALAR_7,
+    db_manager::DbManager,
     helper::sum_adj_asset_values,
     types::{AuctionData, UserPositions},
 };
+use anyhow::Result;
 use soroban_fixed_point_math::FixedPoint;
 use stellar_xdr::curr::Hash;
 
@@ -17,6 +18,7 @@ pub struct OngoingAuction {
     pub pct_filled: u64,
     pub auction_type: u32,
     pub min_profit: i128,
+    pub db_manager: DbManager,
 }
 
 impl OngoingAuction {
@@ -26,6 +28,7 @@ impl OngoingAuction {
         auction_data: AuctionData,
         auction_type: u32, //0 for liquidation, 1 for interest, 2 for bad debt
         min_profit: i128,
+        db_manager: DbManager,
     ) -> Self {
         Self {
             pool,
@@ -36,6 +39,7 @@ impl OngoingAuction {
             pct_filled: 0,
             auction_type,
             min_profit,
+            db_manager,
         }
     }
     pub fn calc_liquidation_fill(
@@ -43,15 +47,31 @@ impl OngoingAuction {
         our_positions: &UserPositions,
         min_hf: i128,
     ) -> Result<i128> {
-        let (collateral_value, adjusted_collateral_value) =
-            sum_adj_asset_values(self.auction_data.lot.clone(), &self.pool, true)?;
-        let (liabilities_value, adjusted_liability_value) =
-            sum_adj_asset_values(self.auction_data.bid.clone(), &self.pool, false)?;
+        let (collateral_value, adjusted_collateral_value) = sum_adj_asset_values(
+            self.auction_data.lot.clone(),
+            &self.pool,
+            true,
+            &self.db_manager,
+        )?;
+        let (liabilities_value, adjusted_liability_value) = sum_adj_asset_values(
+            self.auction_data.bid.clone(),
+            &self.pool,
+            false,
+            &self.db_manager,
+        )?;
 
-        let (_, our_collateral) =
-            sum_adj_asset_values(our_positions.collateral.clone(), &self.pool, true)?;
-        let (_, our_debt) =
-            sum_adj_asset_values(our_positions.liabilities.clone(), &self.pool, false)?;
+        let (_, our_collateral) = sum_adj_asset_values(
+            our_positions.collateral.clone(),
+            &self.pool,
+            true,
+            &self.db_manager,
+        )?;
+        let (_, our_debt) = sum_adj_asset_values(
+            our_positions.liabilities.clone(),
+            &self.pool,
+            false,
+            &self.db_manager,
+        )?;
 
         Ok(self.set_percent_and_target(
             collateral_value,
@@ -67,7 +87,12 @@ impl OngoingAuction {
         backstop_token: Hash,
         bid_value: i128,
     ) -> Result<i128> {
-        let (lot_value, _) = sum_adj_asset_values(self.auction_data.lot.clone(), &self.pool, true)?;
+        let (lot_value, _) = sum_adj_asset_values(
+            self.auction_data.lot.clone(),
+            &self.pool,
+            true,
+            &self.db_manager,
+        )?;
         let num_backstop_tokens = self.auction_data.bid.get(&backstop_token).unwrap();
 
         Ok(self.set_percent_and_target(
@@ -84,13 +109,25 @@ impl OngoingAuction {
         min_hf: i128,
         lot_value: i128,
     ) -> Result<i128> {
-        let (liabilities_value, adjusted_liability_value) =
-            sum_adj_asset_values(self.auction_data.bid.clone(), &self.pool, true)?;
+        let (liabilities_value, adjusted_liability_value) = sum_adj_asset_values(
+            self.auction_data.bid.clone(),
+            &self.pool,
+            true,
+            &self.db_manager,
+        )?;
 
-        let (_, our_collateral) =
-            sum_adj_asset_values(our_positions.collateral.clone(), &self.pool, true)?;
-        let (_, our_debt) =
-            sum_adj_asset_values(our_positions.liabilities.clone(), &self.pool, false)?;
+        let (_, our_collateral) = sum_adj_asset_values(
+            our_positions.collateral.clone(),
+            &self.pool,
+            true,
+            &self.db_manager,
+        )?;
+        let (_, our_debt) = sum_adj_asset_values(
+            our_positions.liabilities.clone(),
+            &self.pool,
+            false,
+            &self.db_manager,
+        )?;
 
         Ok(self.set_percent_and_target(
             lot_value,
@@ -209,7 +246,10 @@ fn get_bid_required(fill_block: i128, raw_bid_required: i128, bid_offset: i128) 
 
 #[cfg(test)]
 mod tests {
-    use blend_utilities::{constants::SCALAR_7, types::AuctionData};
+    use crate::constants::SCALAR_7;
+    use crate::db_manager::DbManager;
+    use crate::types::AuctionData;
+
     use stellar_xdr::curr::Hash;
 
     #[test]
@@ -265,6 +305,7 @@ mod tests {
             },
             0,
             10 * SCALAR_7,
+            DbManager::new("test".to_string()),
         );
         auction.pct_filled = 50;
         let profit = auction.set_percent_and_target(
@@ -291,6 +332,7 @@ mod tests {
             },
             0,
             10 * SCALAR_7,
+            DbManager::new("test".to_string()),
         );
         auction.pct_filled = 0;
         let profit = auction.set_percent_and_target(

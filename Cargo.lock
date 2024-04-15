@@ -126,9 +126,7 @@ dependencies = [
  "anyhow",
  "artemis-core",
  "async-trait",
- "blend-auctioneer",
- "blend-liquidator",
- "blend-utilities",
+ "blend-strategies",
  "clap",
  "csv",
  "dotenv",
@@ -245,48 +243,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf4b9d6a944f767f8e5e0db018570623c85f3d925ac718db4e06d0187adb21c1"
 
 [[package]]
-name = "blend-auctioneer"
+name = "blend-strategies"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "artemis-core",
  "async-trait",
- "blend-utilities",
- "ed25519-dalek 2.0.0",
- "rusqlite",
- "soroban-cli",
- "soroban-rpc",
- "soroban-spec-tools",
- "stellar-strkey 0.0.7",
- "stellar-xdr",
- "tracing",
-]
-
-[[package]]
-name = "blend-liquidator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "artemis-core",
- "async-trait",
- "blend-utilities",
- "ed25519-dalek 2.0.0",
- "rusqlite",
- "soroban-cli",
- "soroban-fixed-point-math",
- "soroban-rpc",
- "soroban-spec-tools",
- "stellar-strkey 0.0.7",
- "stellar-xdr",
- "tracing",
-]
-
-[[package]]
-name = "blend-utilities"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "artemis-core",
  "ed25519-dalek 2.0.0",
  "rusqlite",
  "serde",
@@ -294,6 +256,7 @@ dependencies = [
  "soroban-fixed-point-math",
  "soroban-rpc",
  "soroban-spec-tools",
+ "stellar-strkey 0.0.7",
  "stellar-xdr",
  "tracing",
 ]

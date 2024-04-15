@@ -3,11 +3,10 @@ use std::collections::HashMap;
 use artemis_core::{
     collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
 };
-use rusqlite::{params, Connection};
 use serde::{Deserialize, Deserializer};
 use soroban_cli::utils::contract_id_from_str;
 use soroban_rpc::Event as SorobanEvent;
-use stellar_xdr::curr::{Hash, ScAddress};
+use stellar_xdr::curr::Hash;
 /// Core Event enum for the current strategy.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -25,6 +24,8 @@ pub enum Action {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub rpc_url: String,
+    pub network_passphrase: String,
+    pub db_path: String,
     #[serde(deserialize_with = "from_strkey_vec")]
     pub pools: Vec<Hash>,
     #[serde(deserialize_with = "from_strkey_vec")]
@@ -42,7 +43,6 @@ pub struct Config {
     pub oracle_id: Hash,
     pub min_hf: i128,
     pub required_profit: i128,
-    pub network_passphrase: String,
     pub oracle_decimals: u32,
 }
 fn from_strkey_vec<'de, D>(deserializer: D) -> Result<Vec<Hash>, D::Error>
@@ -121,58 +121,6 @@ impl ReserveConfig {
             est_d_rate,
             scalar,
         }
-    }
-    pub fn from_db_w_asset(
-        pool: &Hash,
-        asset: &Hash,
-        db: &Connection,
-    ) -> Result<Self, rusqlite::Error> {
-        db.query_row(
-            "SELECT asset_index, dRate,
-            bRate,
-            collateralFactor,
-            liabilityFactor,
-            scalar FROM pool_asset_data WHERE key = ?",
-            [(ScAddress::Contract(asset.clone()).to_string()
-                + &ScAddress::Contract(pool.clone()).to_string())
-                .to_string()],
-            |row| {
-                Ok(ReserveConfig {
-                    asset: asset.clone(),
-                    index: row.get::<_, u32>(0)?,
-                    est_d_rate: row.get::<_, isize>(1)? as i128,
-                    est_b_rate: row.get::<_, isize>(2)? as i128,
-                    collateral_factor: row.get::<_, u32>(3)?,
-                    liability_factor: row.get::<_, u32>(4)?,
-                    scalar: row.get::<_, isize>(5)? as i128,
-                })
-            },
-        )
-    }
-    pub fn from_db_w_index(
-        pool: &Hash,
-        index: &u32,
-        db: &Connection,
-    ) -> Result<Self, rusqlite::Error> {
-        db.query_row(
-            "SELECT address, dRate,
-            bRate,
-            collateralFactor,
-            liabilityFactor,
-            scalar FROM pool_asset_data WHERE asset_index = ?1 AND pool_address = ?2",
-            params![index, ScAddress::Contract(pool.clone()).to_string(),],
-            |row| {
-                Ok(ReserveConfig {
-                    asset: Hash(contract_id_from_str(&row.get::<_, String>(0)?).unwrap()),
-                    index: *index,
-                    est_d_rate: row.get::<_, isize>(1)? as i128,
-                    est_b_rate: row.get::<_, isize>(2)? as i128,
-                    collateral_factor: row.get::<_, u32>(3)?,
-                    liability_factor: row.get::<_, u32>(4)?,
-                    scalar: row.get::<_, isize>(5)? as i128,
-                })
-            },
-        )
     }
 }
 
