@@ -263,6 +263,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "blend-inventory-management"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "artemis-core",
+ "async-trait",
+ "blend-utilities",
+ "ed25519-dalek 2.0.0",
+ "rusqlite",
+ "soroban-cli",
+ "soroban-fixed-point-math",
+ "soroban-rpc",
+ "soroban-spec-tools",
+ "stellar-strkey 0.0.7",
+ "stellar-xdr",
+ "tracing",
+]
+
+[[package]]
 name = "blend-liquidator"
 version = "0.1.0"
 dependencies = [
