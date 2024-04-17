@@ -7,9 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 artemis-core = { path = "../../crates/artemis-core" }
-blend-liquidator = { path = "../../crates/strategies/blend-liquidator" }
-blend-auctioneer = { path = "../../crates/strategies/blend-auctioneer" }
-blend-utilities = { path = "../../crates/strategies/blend-utilities" }
+blend-strategies = { path = "../../crates/strategies/blend-strategies" }
 
 stellar-xdr = {workspace = true}
 soroban-rpc = {workspace = true}

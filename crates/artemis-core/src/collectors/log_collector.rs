@@ -47,6 +47,7 @@ impl Collector<Event> for LogCollector {
             if last_event_timestamp == 0 {
                 last_event_timestamp = client.get_latest_ledger().await.unwrap().sequence;
             }
+
             loop {
                 let result: GetEventsResponse;
                 if let Some(cursor_id) = last_cursor_id.clone() {
