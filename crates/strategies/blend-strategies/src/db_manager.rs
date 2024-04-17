@@ -12,6 +12,7 @@ pub struct DbManager {
     pub db_directory: String,
     pub blend_asset_path: PathBuf,
     pub blend_users_path: PathBuf,
+    pub liquid_prices_path: PathBuf,
 }
 
 impl DbManager {
@@ -20,10 +21,16 @@ impl DbManager {
             db_directory: db_path.clone(),
             blend_asset_path: Path::new(&db_path).join("blend_assets.db").to_path_buf(),
             blend_users_path: Path::new(&db_path).join("blend_users.db").to_path_buf(),
+            liquid_prices_path: Path::new(&db_path).join("prices.db").to_path_buf(),
         }
     }
 
-    pub fn initialize(&self, assets: &Vec<Hash>) -> Result<()> {
+    pub fn initialize(
+        &self,
+        assets: &Vec<Hash>,
+        xlm_address: Hash,
+        usdc_address: Hash,
+    ) -> Result<()> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
         db.execute(
             "CREATE table if not exists asset_prices (
@@ -46,7 +53,6 @@ impl DbManager {
              )",
             [],
         )?;
-
         let placeholder_int = 1i64;
         for asset in assets.clone() {
             let asset_str = ScAddress::Contract(asset).to_string();
@@ -72,6 +78,49 @@ impl DbManager {
          )",
             [],
         )?;
+        db.close().unwrap();
+
+        let db = Connection::open(&self.liquid_prices_path).unwrap();
+        db.execute(
+            "CREATE table if not exists asset_prices (
+                address string primary key,
+                intermediary string
+                price integer not null
+             )",
+            [],
+        )?;
+        let placeholder_int = 1i64;
+        for asset in assets.clone() {
+            let asset_str = ScAddress::Contract(asset).to_string();
+            let result = match asset {
+                // liquid USDC is always worth 1 since it's the same as our collateral asset
+                usdc_address => db.execute(
+                    "INSERT INTO asset_prices (address, price) VALUES (?, ?)",
+                    params![asset_str, 1_000_0000i64],
+                ),
+                // intermediary is null if XLM
+                xlm_address => db.execute(
+                    "INSERT INTO asset_prices (address, price) VALUES (?, ?)",
+                    params![asset_str, placeholder_int],
+                ),
+                // intermediary is assumed to be XLM //TODO: update for assets with USDC pairs
+                _ => db.execute(
+                    "INSERT INTO asset_prices (address,intermediary, price) VALUES (?, ?)",
+                    params![
+                        asset_str,
+                        ScAddress::Contract(xlm_address).to_string(),
+                        placeholder_int
+                    ],
+                ),
+            };
+            match result {
+                Ok(_) => (),
+                // Asset already exists in the table ignore error
+                Err(rusqlite::Error::SqliteFailure(err, _))
+                    if err.code == rusqlite::ErrorCode::ConstraintViolation => {}
+                Err(err) => error!("Error inserting price: {}", err),
+            }
+        }
         db.close().unwrap();
         Ok(())
     }
