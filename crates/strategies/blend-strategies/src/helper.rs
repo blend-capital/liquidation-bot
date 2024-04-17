@@ -103,6 +103,24 @@ pub fn decode_scaddress_to_hash(address: &ScVal) -> Hash {
     }
 }
 
+pub fn decode_scaddress_to_string(address: &ScVal) -> String {
+    match address {
+        ScVal::Address(address) => match address {
+            ScAddress::Account(account_id) => match &account_id.0 {
+                stellar_xdr::curr::PublicKey::PublicKeyTypeEd25519(key) => {
+                    return key.to_string();
+                }
+            },
+            ScAddress::Contract(contract_id) => {
+                return contract_id.to_string();
+            }
+        },
+        _ => {
+            panic!("Error: expected ScVal to be Address");
+        }
+    }
+}
+
 pub fn decode_i128_to_native(scval: &ScVal) -> i128 {
     match scval {
         ScVal::I128(num) => {
@@ -470,8 +488,12 @@ pub async fn bstop_token_to_usdc(
         }
         Err(_) => {
             error!("Error: failed to simulate backstop token USDC withdrawal - using balance method instead");
-            let total_comet_usdc =
-                get_balance(rpc, bstop_tkn_address.clone(), usdc_address.clone(), true).await?;
+            let total_comet_usdc = get_balance(
+                rpc,
+                ScAddress::Contract(bstop_tkn_address.clone()).to_string(),
+                usdc_address.clone(),
+            )
+            .await?;
             let total_comet_tokens = total_comet_tokens(rpc, bstop_tkn_address.clone()).await?;
             Some(
                 total_comet_usdc
@@ -487,14 +509,14 @@ pub async fn bstop_token_to_usdc(
 }
 
 // Gets balance of an asset
-pub async fn get_balance(rpc: &Client, user: Hash, asset: Hash, is_contract: bool) -> Result<i128> {
+pub async fn get_balance(rpc: &Client, user: String, asset: Hash) -> Result<i128> {
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
     let op = BlendTxBuilder {
         contract_id: asset.clone(),
         signing_key: key.clone(),
     }
-    .get_balance(&user, is_contract);
+    .get_balance(&user.clone().as_str());
     let transaction: TransactionEnvelope = TransactionEnvelope::Tx(TransactionV1Envelope {
         tx: Transaction {
             source_account: MuxedAccount::Ed25519(Uint256(key.verifying_key().to_bytes())),

@@ -1,12 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use crate::types::ReserveConfig;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use soroban_cli::utils::contract_id_from_str;
-use stellar_xdr::curr::{AccountId, Hash, PublicKey, ScAddress, Uint256};
+use stellar_xdr::curr::{Hash, ScAddress};
 use tracing::{error, info};
-
-use crate::types::ReserveConfig;
 
 #[derive(Debug, Clone)]
 pub struct DbManager {
@@ -212,37 +211,30 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn get_users(&self) -> Result<Vec<Hash>, rusqlite::Error> {
+    pub fn get_users(&self) -> Result<Vec<String>, rusqlite::Error> {
         let db = Connection::open(&self.blend_users_path).unwrap();
-        let mut user_hashes = Vec::new();
+        let mut user_addresses = Vec::new();
 
         {
             let mut stmt = db.prepare("SELECT address FROM users").unwrap();
             let users = stmt.query_map([], |row| Ok(row.get::<_, String>(0)?))?;
             for user in users {
-                user_hashes.push(Hash(
-                    stellar_strkey::ed25519::PublicKey::from_string(&user?)
-                        .unwrap()
-                        .0,
-                ));
+                user_addresses.push(match stellar_strkey::Strkey::from_string(&user?).unwrap() {
+                    stellar_strkey::Strkey::PublicKeyEd25519(pk) => pk.to_string(),
+                    stellar_strkey::Strkey::Contract(pk) => pk.to_string(),
+                    _ => continue,
+                });
             }
         }
         db.close().unwrap();
-        return Ok(user_hashes);
+        return Ok(user_addresses);
     }
-    pub fn add_user(&self, user_id: &Hash) -> Result<()> {
+    pub fn add_user(&self, user_id: &String) -> Result<()> {
         let db = Connection::open(Path::new(&self.blend_users_path))?;
-        let public_key = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
-            user_id.0,
-        ))))
-        .to_string();
 
-        match db.execute(
-            "INSERT INTO users (address) VALUES (?1)",
-            [public_key.clone()],
-        ) {
+        match db.execute("INSERT INTO users (address) VALUES (?1)", [user_id.clone()]) {
             Ok(_) => {
-                info!("Found new user: {}", public_key.clone());
+                info!("Found new user: {}", user_id.clone());
             }
             Err(_) => {}
         }

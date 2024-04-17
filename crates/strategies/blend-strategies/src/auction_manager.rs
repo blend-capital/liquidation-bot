@@ -11,7 +11,7 @@ use stellar_xdr::curr::Hash;
 #[derive(Debug, Clone)]
 pub struct OngoingAuction {
     pub pool: Hash,
-    pub user: Hash,
+    pub user: String,
     pub auction_data: AuctionData,
     pub target_block: u32,
     pub pct_to_fill: u64,
@@ -24,7 +24,7 @@ pub struct OngoingAuction {
 impl OngoingAuction {
     pub fn new(
         pool: Hash,
-        user: Hash,
+        user: String,
         auction_data: AuctionData,
         auction_type: u32, //0 for liquidation, 1 for interest, 2 for bad debt
         min_profit: i128,
@@ -181,7 +181,8 @@ impl OngoingAuction {
             100
         } else {
             let pct = our_max_bid.fixed_div_floor(bid_required, 100).unwrap() as i128;
-            let profit_dif = self.min_profit - profit.fixed_mul_floor(pct, 100).unwrap();
+            profit = profit.fixed_mul_floor(pct, 100).unwrap();
+            let profit_dif = self.min_profit - profit;
             if profit_dif > 0 {
                 let profit_per_block = lot_value
                     .fixed_mul_floor(pct, 100)
@@ -206,7 +207,7 @@ fn get_fill_info(min_profit: i128, lot_value: i128, bid_value: i128) -> (i128, i
     let mut mod_bid_value = bid_value.clone();
     let step_lot_value = lot_value / 200;
     let step_bid_value = bid_value / 200;
-    for i in 0..400 {
+    for i in 1..400 {
         if i <= 200 {
             mod_lot_value += step_lot_value;
         } else {
@@ -214,7 +215,7 @@ fn get_fill_info(min_profit: i128, lot_value: i128, bid_value: i128) -> (i128, i
         }
         let profit = mod_lot_value - mod_bid_value;
         if profit >= min_profit {
-            return (i + 1, profit);
+            return (i, profit);
         }
     }
     (400, lot_value)
@@ -297,7 +298,7 @@ mod tests {
         //set up test
         let mut auction = super::OngoingAuction::new(
             Hash([0; 32]),
-            Hash([0; 32]),
+            "test".to_string(),
             AuctionData {
                 block: 300,
                 lot: Default::default(),
@@ -317,14 +318,14 @@ mod tests {
         );
         assert_eq!(auction.target_block, 414);
         assert_eq!(auction.pct_to_fill, 75);
-        assert_eq!(profit, 10 * SCALAR_7);
+        assert_eq!(profit, 10_500_0000);
     }
     #[test]
     fn test_set_pct_target_100() {
         //set up test
         let mut auction = super::OngoingAuction::new(
             Hash([0; 32]),
-            Hash([0; 32]),
+            "test".to_string(),
             AuctionData {
                 block: 300,
                 lot: Default::default(),
@@ -344,6 +345,6 @@ mod tests {
         );
         assert_eq!(auction.target_block, 528);
         assert_eq!(auction.pct_to_fill, 100);
-        assert_eq!(profit, 10 * SCALAR_7);
+        assert_eq!(profit, 10_800_0000);
     }
 }

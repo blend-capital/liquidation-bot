@@ -9,8 +9,8 @@ use crate::{
     db_manager::DbManager,
     error_logger::log_error,
     helper::{
-        decode_scaddress_to_hash, evaluate_user, get_asset_prices_db, get_reserve_config_db,
-        update_rate, user_positions_from_ledger_entry,
+        decode_scaddress_to_hash, decode_scaddress_to_string, evaluate_user, get_asset_prices_db,
+        get_reserve_config_db, update_rate, user_positions_from_ledger_entry,
     },
     transaction_builder::BlendTxBuilder,
     types::{Action, Config, Event, UserPositions},
@@ -21,10 +21,10 @@ use soroban_cli::utils::contract_id_from_str;
 use soroban_rpc::{Client, Event as SorobanEvent};
 use std::{collections::HashMap, str::FromStr, thread::sleep, time::Duration, vec};
 use stellar_xdr::curr::{
-    AccountId, Hash, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
-    ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, Uint256, VecM,
+    Hash, LedgerEntryData, LedgerKeyContractData, Limits, ReadXdr, ScAddress, ScMap, ScMapEntry,
+    ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, VecM,
 };
-use tracing::info;
+use tracing::{error, info};
 
 pub struct BlendAuctioneer {
     /// Soroban RPC client for interacting with chain
@@ -39,7 +39,7 @@ pub struct BlendAuctioneer {
     /// - only stores users with health factor < 5
     /// - only stores users with relevant assets
     /// HashMap<PoolId, HashMap<UserId, UserPositions>>
-    users: HashMap<Hash, HashMap<Hash, UserPositions>>,
+    users: HashMap<Hash, HashMap<String, UserPositions>>,
     /// Our signing address
     us: SigningKey,
     /// Our public key
@@ -88,13 +88,26 @@ impl Strategy<Event, Action> for BlendAuctioneer {
         let users = self.db_manager.get_users()?;
         for user in users {
             for pool in self.pools.clone() {
-                if self
-                    .user_has_liquidation(pool.clone(), user.clone())
-                    .await?
-                {
-                    continue;
+                match self.user_has_liquidation(pool.clone(), user.as_str()).await {
+                    Ok(res) => {
+                        if res {
+                            continue;
+                        }
+                    }
+                    Err(err) => error!(
+                        "Failed to check {} for liquidation auction with error: {}",
+                        user.clone(),
+                        err
+                    ),
                 }
-                self.get_user_position(pool.clone(), user.clone()).await?;
+                match self.get_user_position(pool.clone(), user.as_str()).await {
+                    Ok(_) => (),
+                    Err(err) => error!(
+                        "Failed to get positions for user {} with error: {}",
+                        user.clone(),
+                        err
+                    ),
+                }
             }
         }
         info!("synced auctioneer state");
@@ -170,31 +183,34 @@ impl BlendAuctioneer {
         //Deserialize event body cases
         match name.as_str() {
             "new_liquidation_auction" => {
-                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
-                    event.topic[1].as_bytes(),
-                    Limits::none(),
-                )?);
+                let user = ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
 
                 // remove user from users list since they are being liquidated
-                self.users.entry(pool_id.clone()).or_default().remove(&user);
+                self.users
+                    .entry(pool_id.clone())
+                    .or_default()
+                    .remove(&user.to_string());
             }
             "delete_liquidation_auction" => {
                 // If this was an auction we were planning on filling, remove it from the pending list
-                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
-                    event.topic[1].as_bytes(),
-                    Limits::none(),
-                )?);
+                let user = ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
 
                 // add user back to users
-                self.get_user_position(pool_id.clone(), user.clone())
+                match self
+                    .get_user_position(pool_id.clone(), user.to_string().as_str())
                     .await
-                    .unwrap();
+                {
+                    Ok(_) => (),
+                    Err(err) => error!(
+                        "Failed to get positions for user {} with error: {}",
+                        user.to_string(),
+                        err
+                    ),
+                }
             }
             "fill_auction" => {
-                let liquidated_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
-                    event.topic[1].as_bytes(),
-                    Limits::none(),
-                )?);
+                let liquidated_id =
+                    ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
                 let mut auction_type = 0;
                 match ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())? {
                     ScVal::U32(num) => {
@@ -219,25 +235,42 @@ impl BlendAuctioneer {
 
                 if fill_percentage == 100 && auction_type == 0 {
                     // add user back to positions
-                    let score = self
-                        .get_user_position(pool_id.clone(), liquidated_id.clone())
-                        .await?;
-                    //check if a bad debt call is necessary
-                    if score.is_some() && score.unwrap() != 1 {
-                        let action = self.act_on_score(&liquidated_id, &pool_id, score.unwrap());
-                        if action.is_some() {
-                            actions.push(action.unwrap());
+                    match self
+                        .get_user_position(
+                            pool_id.clone(),
+                            liquidated_id.clone().to_string().as_str(),
+                        )
+                        .await
+                    {
+                        Ok(score) => {
+                            //check if a bad debt call is necessary
+                            if score.is_some() && score.unwrap() != 1 {
+                                let action = self.act_on_score(
+                                    &liquidated_id.to_string().as_str(),
+                                    &pool_id,
+                                    score.unwrap(),
+                                );
+                                if action.is_some() {
+                                    actions.push(action.unwrap());
+                                }
+                            }
                         }
+                        Err(err) => error!(
+                            "Failed to get positions for user {} with error: {}",
+                            liquidated_id.clone().to_string(),
+                            err
+                        ),
                     }
                 }
             }
             "bad_debt" => {
-                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
-                    event.topic[1].as_bytes(),
-                    Limits::none(),
-                )?);
+                let user = ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
+
                 // remove user from users list since their positions were removed
-                self.users.entry(pool_id.clone()).or_default().remove(&user);
+                self.users
+                    .entry(pool_id.clone())
+                    .or_default()
+                    .remove(&user.to_string());
                 let tx_builder = BlendTxBuilder {
                     contract_id: pool_id.clone(),
                     signing_key: self.us.clone(),
@@ -380,12 +413,11 @@ impl BlendAuctioneer {
                 }
             }
             "supply_collateral" => {
-                let asset_id = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap(),
-                );
-                let user = decode_scaddress_to_hash(
-                    &ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none()).unwrap(),
-                );
+                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
+                let user = ScAddress::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())?;
 
                 let supply_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
@@ -419,8 +451,14 @@ impl BlendAuctioneer {
                 if supply_amount == 0 || b_tokens_minted == 0 {
                     return Ok(Vec::new());
                 }
-                self.update_user(&pool_id, &user, &asset_id, b_tokens_minted, true)
-                    .await?;
+                self.update_user(
+                    &pool_id,
+                    &user.to_string().as_str(),
+                    &asset_id,
+                    b_tokens_minted,
+                    true,
+                )
+                .await?;
 
                 // Update reserve's estimated b rate by using request.amount/b_tokens_minted from the emitted event
 
@@ -483,8 +521,14 @@ impl BlendAuctioneer {
                     return Ok(Vec::new());
                 }
                 // Update users collateral positions
-                self.update_user(&pool_id, &user, &asset_id, -b_tokens_burned, true)
-                    .await?;
+                self.update_user(
+                    &pool_id,
+                    &user.to_string().as_str(),
+                    &asset_id,
+                    -b_tokens_burned,
+                    true,
+                )
+                .await?;
 
                 // Update reserve estimated b rate by using tokens out/b tokens burned from the emitted event
 
@@ -510,10 +554,8 @@ impl BlendAuctioneer {
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
-                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
-                    event.topic[2].as_bytes(),
-                    Limits::none(),
-                )?);
+                let user = ScAddress::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())?;
+
                 let borrow_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
                         if let Some(vec) = vec {
@@ -547,8 +589,14 @@ impl BlendAuctioneer {
                 }
 
                 // Update users liability positions
-                self.update_user(&pool_id, &user, &asset_id, d_token_burned, false)
-                    .await?;
+                self.update_user(
+                    &pool_id,
+                    &user.to_string().as_str(),
+                    &asset_id,
+                    d_token_burned,
+                    false,
+                )
+                .await?;
 
                 // Update reserve estimated b rate by using request.amount/d tokens minted from the emitted event
                 let new_rate = update_rate(borrow_amount, d_token_burned);
@@ -573,10 +621,8 @@ impl BlendAuctioneer {
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
-                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
-                    event.topic[2].as_bytes(),
-                    Limits::none(),
-                )?);
+                let user = ScAddress::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())?;
+
                 let repay_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
                         if let Some(vec) = vec {
@@ -610,8 +656,14 @@ impl BlendAuctioneer {
                     return Ok(Vec::new());
                 }
                 // Update users liability positions
-                self.update_user(&pool_id, &user, &asset_id, -d_token_burned, false)
-                    .await?;
+                self.update_user(
+                    &pool_id,
+                    &user.to_string().as_str(),
+                    &asset_id,
+                    -d_token_burned,
+                    false,
+                )
+                .await?;
                 // Update reserve estimated d rate by using request.amount/d tokens burnt from the emitted event
 
                 let new_rate = update_rate(repay_amount, d_token_burned);
@@ -659,16 +711,19 @@ impl BlendAuctioneer {
             for pool in self.pools.iter() {
                 for users in self.users.get(pool).iter_mut() {
                     for user in users.iter() {
-                        let score = evaluate_user(pool, user.1, &self.db_manager)?;
+                        match evaluate_user(pool, user.1, &self.db_manager) {
+                            Ok(score) => {
+                                let action = self.act_on_score(&user.0, &pool, score);
+                                if action.is_some() {
+                                    info!("Creating liquidation auction for user: {}", user.0);
+                                    actions.push(action.unwrap());
+                                }
+                            }
+                            Err(err) => {
+                                error!("Failed to evaluate user: {} with error: {}", user.0, err)
+                            }
+                        };
                         // create liquidation auction if needed
-                        let action = self.act_on_score(&user.0, &pool, score);
-                        if action.is_some() {
-                            info!(
-                                "Creating liquidation auction for user: {:?}",
-                                PublicKey::PublicKeyTypeEd25519(Uint256(user.0 .0)).to_string()
-                            );
-                            actions.push(action.unwrap());
-                        }
                     }
                 }
             }
@@ -677,14 +732,12 @@ impl BlendAuctioneer {
         return Ok(actions);
     }
 
-    async fn get_user_position(&mut self, pool_id: Hash, user_id: Hash) -> Result<Option<u64>> {
+    async fn get_user_position(&mut self, pool_id: Hash, user_id: &str) -> Result<Option<u64>> {
         let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
             ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
                 "Positions",
             )?))),
-            ScVal::Address(ScAddress::Account(AccountId(
-                PublicKey::PublicKeyTypeEd25519(Uint256(user_id.0)),
-            ))),
+            ScVal::Address(ScAddress::from_str(user_id)?),
         ])?));
         let position_ledger_key =
             stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
@@ -703,17 +756,16 @@ impl BlendAuctioneer {
 
                 match &value {
                     LedgerEntryData::ContractData(data) => {
-                        let mut user_id: Hash = Hash([0; 32]);
-                        match &data.key {
+                        let user_id = match &data.key {
                             ScVal::Vec(vec) => {
                                 if let Some(vec) = vec {
-                                    user_id = decode_scaddress_to_hash(&vec[1]);
+                                    decode_scaddress_to_string(&vec[1])
                                 } else {
-                                    ();
+                                    return Ok(None);
                                 }
                             }
-                            _ => (),
-                        }
+                            _ => return Ok(None),
+                        };
                         let user_position =
                             user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager)?;
 
@@ -732,28 +784,23 @@ impl BlendAuctioneer {
         }
         Ok(None)
     }
-    async fn user_has_liquidation(&mut self, pool: Hash, user: Hash) -> Result<bool> {
+    async fn user_has_liquidation(&mut self, pool: Hash, user: &str) -> Result<bool> {
         let pool_id = ScAddress::Contract(pool.clone());
-        let reserve_data_key = ScVal::Vec(Some(
-            ScVec::try_from(vec![
-                ScVal::Symbol(ScSymbol::from(ScSymbol::from(
-                    StringM::from_str("Auction").unwrap(),
-                ))),
-                ScVal::Map(Some(ScMap(VecM::try_from(vec![
-                    ScMapEntry {
-                        key: from_string_primitive("auct_type", &ScSpecTypeDef::Symbol)?,
-                        val: from_string_primitive("0", &ScSpecTypeDef::U32)?,
-                    },
-                    ScMapEntry {
-                        key: from_string_primitive("user", &ScSpecTypeDef::Symbol)?,
-                        val: ScVal::Address(ScAddress::Account(AccountId(
-                            PublicKey::PublicKeyTypeEd25519(Uint256(user.0.clone())),
-                        ))),
-                    },
-                ])?))),
-            ])
-            .unwrap(),
-        ));
+        let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
+            ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                "Auction",
+            )?))),
+            ScVal::Map(Some(ScMap(VecM::try_from(vec![
+                ScMapEntry {
+                    key: from_string_primitive("auct_type", &ScSpecTypeDef::Symbol)?,
+                    val: from_string_primitive("0", &ScSpecTypeDef::U32)?,
+                },
+                ScMapEntry {
+                    key: from_string_primitive("user", &ScSpecTypeDef::Symbol)?,
+                    val: ScVal::Address(ScAddress::from_str(user)?),
+                },
+            ])?))),
+        ])?));
         let position_ledger_key =
             stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
                 contract: pool_id.clone(),
@@ -773,7 +820,7 @@ impl BlendAuctioneer {
                     LedgerEntryData::ContractData(_) => {
                         info!(
                             "Found outstanding user liquidation auction for: {:?}",
-                            PublicKey::PublicKeyTypeEd25519(Uint256(user.0.clone())).to_string()
+                            user.to_string()
                         );
                         return Ok(true);
                     }
@@ -785,7 +832,7 @@ impl BlendAuctioneer {
         Ok(false)
     }
 
-    fn act_on_score(&self, user: &Hash, pool: &Hash, score: u64) -> Option<Action> {
+    fn act_on_score(&self, user: &str, pool: &Hash, score: u64) -> Option<Action> {
         let tx_builder = BlendTxBuilder {
             contract_id: pool.clone(),
             signing_key: self.us.clone(),
@@ -793,7 +840,7 @@ impl BlendAuctioneer {
         if score == 0 {
             // Code to execute if the value is None
             return Some(Action::SubmitTx(SubmitStellarTx {
-                op: tx_builder.bad_debt(user.clone()),
+                op: tx_builder.bad_debt(user),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
             }));
@@ -802,7 +849,7 @@ impl BlendAuctioneer {
         if score > 2 {
             // Code to execute if the value is None
             return Some(Action::SubmitTx(SubmitStellarTx {
-                op: tx_builder.new_liquidation_auction(user.clone(), score),
+                op: tx_builder.new_liquidation_auction(user, score),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
             }));
@@ -816,14 +863,14 @@ impl BlendAuctioneer {
     async fn update_user(
         &mut self,
         pool_id: &Hash,
-        user_id: &Hash,
+        user_id: &str,
         asset_id: &Hash,
         amount: i128,
         collateral: bool,
     ) -> Result<()> {
-        self.db_manager.add_user(user_id)?;
+        self.db_manager.add_user(&user_id.to_string())?;
         let pool = self.users.entry(pool_id.clone()).or_default();
-        if let Some(positions) = pool.get_mut(&user_id) {
+        if let Some(positions) = pool.get_mut(&user_id.to_string()) {
             if collateral {
                 let balance = positions.collateral.entry(asset_id.clone()).or_insert(0);
                 *balance += amount;
@@ -836,13 +883,12 @@ impl BlendAuctioneer {
             if (collateral && amount > 0) || (!collateral && amount < 0) {
                 let score = evaluate_user(&pool_id, &positions, &self.db_manager)?;
                 if score == 1 {
-                    pool.remove(&user_id);
+                    pool.remove(&user_id.to_string());
                 }
             }
         } else if (collateral && amount < 0) || (!collateral && amount > 0) {
             // User's borrowing power is going down so we should potentially add them
-            self.get_user_position(pool_id.clone(), user_id.clone())
-                .await?;
+            self.get_user_position(pool_id.clone(), user_id).await?;
         }
         Ok(())
     }
