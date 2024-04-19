@@ -6,11 +6,10 @@ use crate::{
 };
 use anyhow::Result;
 use soroban_fixed_point_math::FixedPoint;
-use stellar_xdr::curr::Hash;
 
 #[derive(Debug, Clone)]
 pub struct OngoingAuction {
-    pub pool: Hash,
+    pub pool: String,
     pub user: String,
     pub auction_data: AuctionData,
     pub target_block: u32,
@@ -23,7 +22,7 @@ pub struct OngoingAuction {
 
 impl OngoingAuction {
     pub fn new(
-        pool: Hash,
+        pool: String,
         user: String,
         auction_data: AuctionData,
         auction_type: u32, //0 for liquidation, 1 for interest, 2 for bad debt
@@ -84,7 +83,7 @@ impl OngoingAuction {
     pub fn calc_interest_fill(
         &mut self,
         our_backstop_tokens: i128,
-        backstop_token: Hash,
+        backstop_token: String,
         bid_value: i128,
     ) -> Result<i128> {
         let (lot_value, _) = sum_adj_asset_values(
@@ -251,8 +250,6 @@ mod tests {
     use crate::db_manager::DbManager;
     use crate::types::AuctionData;
 
-    use stellar_xdr::curr::Hash;
-
     #[test]
     fn test_max_delta() {
         //set up test
@@ -297,7 +294,7 @@ mod tests {
     fn test_set_pct_target() {
         //set up test
         let mut auction = super::OngoingAuction::new(
-            Hash([0; 32]),
+            "CBFG6XIGMSUUEQRMBM7G4RSLPYPVIC6WYHC2XVKSNBFET4S3IBZA6TNQ".to_string(),
             "test".to_string(),
             AuctionData {
                 block: 300,
@@ -324,7 +321,7 @@ mod tests {
     fn test_set_pct_target_100() {
         //set up test
         let mut auction = super::OngoingAuction::new(
-            Hash([0; 32]),
+            "CBFG6XIGMSUUEQRMBM7G4RSLPYPVIC6WYHC2XVKSNBFET4S3IBZA6TNQ".to_string(),
             "test".to_string(),
             AuctionData {
                 block: 300,

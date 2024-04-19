@@ -28,6 +28,7 @@ pub struct SubmitStellarTx {
     pub op: Operation,
     pub gas_bid_info: Option<GasBidInfo>,
     pub signing_key: SigningKey,
+    pub max_retries: u32,
 }
 
 impl SorobanExecutor {
@@ -44,19 +45,18 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
     /// Send a transaction to the mempool.
     async fn execute(&self, action: SubmitStellarTx) -> Result<()> {
         let mut retry_counter = 0;
-        while retry_counter < 100 {
+        while retry_counter <= action.max_retries {
             let result = submit(&self.rpc, &self.network_passphrase, &action).await;
             match result {
                 Ok(_) => {
                     return Ok(());
                 }
                 Err(e) => {
-                    println!("Failed to submit tx: {:#?}", action);
                     retry_counter += 1;
-                    if retry_counter == 100 {
-                        error!("Failed to submit tx: {:#?}", e);
+                    if retry_counter >= action.max_retries {
+                        error!("Failed to submit tx: {:#?}", action.op);
                         let msg = format!(
-                            "Failed to submit tx: {:?} {:?} with error: {}",
+                            "Failed to submit tx: {:?} {:?} with error: {:#?}",
                             action.op, action.gas_bid_info, e
                         );
                         let file_path = env::current_dir().unwrap().join("error_logs.txt");
@@ -104,7 +104,6 @@ async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx
         operations: vec![action.op.clone()].try_into()?,
         ext: stellar_xdr::curr::TransactionExt::V0,
     };
-    info!("Submitting tx: {:?}", action.op.body.clone());
     let res = rpc
         .prepare_and_send_transaction(
             &tx,
@@ -115,6 +114,30 @@ async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx
             None,
         )
         .await?;
+    info!("Submitted tx: {:#?}\n", action.op.body.clone());
     info!("Soroban response: {:?}", res.status);
+    let log_msg = format!(
+        "Submitted tx: {:#?} {:#?} with response: {:#?} {:?}\n",
+        match action.op.body.clone() {
+            stellar_xdr::curr::OperationBody::InvokeHostFunction(body) => Some(body.host_function),
+            _ => None,
+        },
+        action.gas_bid_info,
+        res.status,
+        res.envelope
+    );
+    log_transaction(&log_msg)?;
+    Ok(())
+}
+
+pub fn log_transaction(msg: &str) -> Result<()> {
+    let file_path = env::current_dir().unwrap().join("transaction_logs.txt");
+
+    let mut output = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(file_path)?;
+    writeln!(output, "{}\n", msg)?;
+    output.flush().unwrap();
     Ok(())
 }

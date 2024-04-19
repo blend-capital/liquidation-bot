@@ -17,7 +17,6 @@ use clap::Parser;
 use ed25519_dalek::SigningKey;
 use soroban_rpc::EventType;
 use stellar_strkey::ed25519::PrivateKey;
-use stellar_xdr::curr::ScAddress;
 
 use serde_json;
 use std::fs;
@@ -38,8 +37,10 @@ async fn main() -> Result<()> {
     // Set up tracing and parse args.
     let filter = filter::Targets::new()
         .with_target("artemis_core", Level::INFO)
-        .with_target("blend_liquidator", Level::INFO)
-        .with_target("blend_auctioneer", Level::INFO);
+        .with_target("blend_strategies::auctioneer_strategy", Level::INFO)
+        .with_target("blend_strategies::liquidation_strategy", Level::INFO)
+        .with_target("blend_strategies::db_manager", Level::INFO);
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(filter)
@@ -56,16 +57,12 @@ async fn main() -> Result<()> {
     let mut engine: Engine<Event, Action> = Engine::default();
 
     // Set up log collector
-    let mut event_contract_ids = Vec::new();
-    for contract in config.pools.iter() {
-        event_contract_ids.push(ScAddress::Contract(contract.clone()).to_string());
-    }
-    event_contract_ids.push(ScAddress::Contract(config.oracle_id.clone()).to_string());
+
     let log_collector = Box::new(LogCollector::new(
         config.rpc_url.clone(),
         EventFilter {
             event_type: EventType::Contract,
-            contract_ids: event_contract_ids,
+            contract_ids: config.pools.clone(),
             topics: vec![],
         },
     ));
