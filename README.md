@@ -1,69 +1,82 @@
+## Blend Liquidation Bot
 
-![](./assets/artemis.png)
+The Blend Liquidation Bot is a project that utilizes the [Artemis framework](https://github.com/paradigmxyz/artemis) to create a liquidation bot for the Blend protocol on the Soroban blockchain. The bot includes auction creation and filling functionalities that are triggered by contract events streamed from an rpc. The purpose of this bot is to create user liquidation, interest, and bad debt auctions and to fill them when the desired profitability is met. It is recommended to run a private rpc to submit transactions as public rpcs will lead to rate limiting issues.
 
+## Running the Rust Project
 
-[![CI status](https://github.com/paradigmxyz/reth/workflows/ci/badge.svg)][gh-ci]
-[![Telegram Chat][tg-badge]][tg-url]
+### Prerequisites
 
-[gh-ci]: https://github.com/paradigmxyz/reth/actions/workflows/rust.yml
-[tg-badge]: https://img.shields.io/badge/chat-telegram-blue
+- [Rust](https://www.rust-lang.org/tools/install)
 
-## What is Artemis?
-
-Artemis is a framework for writing MEV bots in Rust. It's designed to be simple, modular, and fast. 
-
-At its core, Artemis is architected as an event processing pipeline. The library is made up of three main components: 
-
-1. *Collectors*: *Collectors* take in external events (such as pending txs, new blocks, marketplace orders, etc. ) and turn them into an internal *event* representation. 
-2. *Strategies*: *Strategies* contain the core logic required for each MEV opportunity. They take in *events* as inputs, and compute whether any opportunities are available (for example, a strategy might listen to a stream of marketplace orders to see if there are any cross-exchange arbs). *Strategies* produce *actions*.
-3. *Executors*: *Executors* process *actions*, and are responsible for executing them in different domains (for example, submitting txs, posting off-chain orders, etc.).
-
-## Strategies 
-
-The following strategies have been implemented: 
-
-- [Opensea/Sudoswap NFT Arbitrage](/crates/strategies/opensea-sudo-arb/): A strategy implementing atomic, cross-market NFT arbitrage between Seaport and Sudoswap.
-
-## Build, Test and Run
-
-First, make sure the following are installed: 
-1. [Anvil](https://github.com/foundry-rs/foundry/tree/master/crates/anvil#installing-from-source)
-
-In order to build, first clone the github repo: 
+To run the project first clone the repository and navigate to the directory
 
 ```sh
-git clone https://github.com/paradigmxyz/artemis
-cd artemis
+git clone https://github.com/blend-capital/liquidation-bot
+cd liquidation-bot
 ```
 
-Next, run tests with cargo: 
+Then run the following command
 
 ```sh
-cargo test --all
+cargo run -- --config-path "Path to config file" --secret-key "S...."
 ```
 
-In order to run the opensea sudoswap arbitrage strategy, you can run the following command: 
+The config file contains the configuration parameters for the liquidator and auctioneer strategies. An example config file is located at the root called "example.config.json" Use this as a template and rename to config.json. An example config looks like
+
+```json
+{
+  "rpc_url": "http://host.docker.internal:8000",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "db_path": "./",
+  "pools": [
+    "CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN",
+    "CB7SS5VTUQZGPDWPQKD4ZT4NSDX4BR5PJ55OE3GWZZYV3I5PAZBZ7CY5"
+  ],
+  "assets": [
+    "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI",
+    "CAZAQB3D7KSLSNOSQKYD2V4JP5V2Y3B4RDJZRLBFCCIXDCTE3WHSY3UE"
+  ],
+  "backstop": "CD66EGYOKJ4DPY4FADXZS5FNL3DEVANWRNPNVANF6RQIN44GDB3HKANF",
+  "backstop_token_address": "CCDCG7SJSSBIDULL4HIMHH5SCAIATCACVD7JSEGZXORBYRNPV6B7LMLP",
+  "usdc_token_address": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+  "bid_percentage": 0,
+  "oracle_id": "CA2NWEPNC6BD5KELGJDVWWTXUE7ASDKTNQNL6DN3TGBVWFEWSVVGMUAF",
+  "min_hf": 12000000,
+  "required_profit": 10000000,
+  "oracle_decimals": 7
+}
+```
+
+The min_hf represents the minimum health factor of the liquidator in 9 decimals. The required_profit field is the desired profit on liquidations represented in 9 decimals.
+
+## Docker Image
+
+### Building
+
+To build the Docker image, navigate to the project directory (where the Dockerfile is located) and run the following command:
 
 ```sh
-cargo run -- --wss <INFURA_OR_ALCHEMY_KEY> --opensea-api-key <OPENSEA_API_KEY> --private-key <PRIVATE_KEY> --arb-contract-address <ARB_CONTRACT_ADDRESS> --bid-percentage <BID_PERCENTAGE>
+docker build -t blend-liquidation-bot .
 ```
 
-where `ARB_CONTRACT_ADDRESS` is the address to which you deploy the [arb contract](/crates/strategies/opensea-sudo-arb/contracts/src/SudoOpenseaArb.sol).
+This will build a Docker image named blend-liquidation-bot. You can run the image with the docker run command.
 
+### Running
+
+To run the docker image run the following command:
+
+```sh
+docker run --name blend-liquidation-bot --rm --it -v <"Absolute path to config folder">:/opt/liquidation-bot blend-liquidation-bot --private-key S....
+```
+
+The docker image will be run in interactive mode with the specified name. To run the image detached replace -it with -d
+
+The -v flag will mount the local directory to the docker instance and persists data stored by the bot to the specified location. The config mentioned above must be located in this folder. The /opt/liquidation-bot should not be changed as this is the designated location inside the docker container where the project looks for the config. If the container is shutdown restarting the image with the same config directory will restore the bot's data.
+
+Please replace blend-liquidation-bot and liq-bot with the actual name you want to use for your Docker image and instance name.
 
 ## Acknowledgements
 
-- [subway](https://github.com/libevm/subway)
-- [subway-rs](https://github.com/refcell/subway-rs)
-- [cfmms-rs](https://github.com/0xKitsune/cfmms-rs)
-- [rusty-sando](https://github.com/mouseless-eth/rusty-sando)
-- [bundle-generator](https://github.com/Alcibiades-Capital/mev_bundle_generator/blob/master/Cargo.toml)
-- [ethers-rs](https://github.com/gakonst/ethers-rs)
-- [ethers-flashbots](https://github.com/onbjerg/ethers-flashbots)
-
-
-
-[tg-url]: https://t.me/artemis_devs
-
-
-docker run -p 8001:8001 -p 8000:8000 -v /home/ryang/dev/soroban-rpc/config:/config stellar/soroban-rpc --config-path /config/soroban-rpc-config.toml
+- [Artemis](https://github.com/paradigmxyz/artemis)
