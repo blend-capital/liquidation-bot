@@ -1,14 +1,16 @@
 {
-    "rpc_url": "rpc url",
-    "network_passphrase": "Test SDF Network ; September 2015",
-    "pools": ["Pool Address 1", "Pool Address 2"],
-    "assets": ["Asset Address 1", "Asset Address 2"],
-    "backstop": "Backstop Address",
-    "backstop_token_address": "Backstop Token Address",
-    "usdc_token_address": "USDC Token Address",
-    "bid_percentage": 0,
-    "oracle_id": "Oracle Address",
-    "min_hf": 12000000,
-    "required_profit": 10000000,
-    "oracle_decimals": 7
+  "rpc_url": "rpc url",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "db_path": "The path to where you want to store the database files",
+  "pools": ["Pool Address 1", "Pool Address 2"],
+  "assets": ["Asset Address 1", "Asset Address 2"],
+  "backstop": "Backstop Address",
+  "backstop_token_address": "Backstop Token Address",
+  "usdc_token_address": "USDC Token Address",
+  "xlm_address": "XLM Token Address",
+  "bid_percentage": 0,
+  "oracle_id": "Oracle Address",
+  "min_hf": 12000000,
+  "required_profit": 10000000,
+  "oracle_decimals": 7
 }

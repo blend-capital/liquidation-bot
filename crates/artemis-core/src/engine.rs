@@ -103,7 +103,7 @@ where
             let mut event_receiver = event_sender.subscribe();
             let action_sender = action_sender.clone();
             match strategy.sync_state().await {
-                Ok(_) => {}
+                Ok(_) => (),
                 Err(e) => error!("error syncing state: {}", e),
             }
 
