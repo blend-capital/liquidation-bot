@@ -38,7 +38,8 @@ async fn main() -> Result<()> {
     let filter = filter::Targets::new()
         .with_target("artemis_core", Level::INFO)
         .with_target("blend_strategies::auctioneer_strategy", Level::INFO)
-        .with_target("blend_strategies::liquidation_strategy", Level::INFO);
+        .with_target("blend_strategies::liquidation_strategy", Level::INFO)
+        .with_target("blend_strategies::db_manager", Level::INFO);
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())

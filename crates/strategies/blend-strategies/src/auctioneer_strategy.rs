@@ -182,7 +182,6 @@ impl BlendAuctioneer {
             _ => (),
         }
         let data = ScVal::from_xdr_base64(event.value.as_bytes(), Limits::none())?;
-        info!("Processing event: {}", name.clone());
         //Deserialize event body cases
         match name.as_str() {
             "new_liquidation_auction" => {
