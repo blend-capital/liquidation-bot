@@ -22,5 +22,5 @@ WORKDIR app
 COPY --from=builder /app/target/release/artemis ./
 # Install openssl and ca-certificates
 RUN apt-get update && apt install -y libsqlite3-dev && apt install -y openssl && apt install -y ca-certificates
-ENTRYPOINT ["./artemis"]
-CMD ["--private-key", "--config-path"]
+ENTRYPOINT ["./artemis", "--config-path", "/opt/liquidation-bot/config.json"]
+CMD ["--private-key"]
