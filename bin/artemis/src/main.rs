@@ -8,22 +8,25 @@ use artemis_core::{
     executors::soroban_executor::SorobanExecutor,
     types::{CollectorMap, ExecutorMap},
 };
-use blend_auctioneer::strategy::BlendAuctioneer;
-use blend_liquidator::strategy::BlendLiquidator;
-use blend_utilities::types::{Action, Config, Event};
+use blend_strategies::{
+    auctioneer_strategy::BlendAuctioneer,
+    liquidation_strategy::BlendLiquidator,
+    types::{Action, Config, Event},
+};
 use clap::Parser;
 use ed25519_dalek::SigningKey;
 use soroban_rpc::EventType;
 use stellar_strkey::ed25519::PrivateKey;
-use stellar_xdr::curr::ScAddress;
 
 use serde_json;
-use std::{fs, path::Path};
+use std::fs;
 use tracing::{info, Level};
 use tracing_subscriber::{filter, prelude::*};
 /// CLI Options.
 #[derive(Parser, Debug)]
 pub struct Args {
+    #[arg(long)]
+    pub config_path: String,
     /// Private key for sending txs.
     #[arg(long)]
     pub private_key: String,
@@ -34,21 +37,19 @@ async fn main() -> Result<()> {
     // Set up tracing and parse args.
     let filter = filter::Targets::new()
         .with_target("artemis_core", Level::INFO)
-        .with_target("blend_liquidator", Level::INFO)
-        .with_target("blend_auctioneer", Level::INFO);
+        .with_target("blend_strategies::auctioneer_strategy", Level::INFO)
+        .with_target("blend_strategies::liquidation_strategy", Level::INFO)
+        .with_target("blend_strategies::db_manager", Level::INFO);
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(filter)
         .init();
 
     let args = Args::parse();
-    let config_path = if Path::new("/.dockerenv").exists() {
-        "/opt/liquidation-bot/config.json"
-    } else {
-        "./config.json"
-    };
-    let config_data = fs::read_to_string(config_path).expect("Unable to read config file");
+    let config_data = fs::read_to_string(args.config_path).expect("Unable to read config file");
     let config: Config = serde_json::from_str(&config_data).expect("Unable to parse json");
+
     let signing_key =
         SigningKey::from_bytes(&PrivateKey::from_string(&args.private_key).unwrap().0);
 
@@ -56,16 +57,12 @@ async fn main() -> Result<()> {
     let mut engine: Engine<Event, Action> = Engine::default();
 
     // Set up log collector
-    let mut event_contract_ids = Vec::new();
-    for contract in config.pools.iter() {
-        event_contract_ids.push(ScAddress::Contract(contract.clone()).to_string());
-    }
-    event_contract_ids.push(ScAddress::Contract(config.oracle_id.clone()).to_string());
+
     let log_collector = Box::new(LogCollector::new(
         config.rpc_url.clone(),
         EventFilter {
             event_type: EventType::Contract,
-            contract_ids: event_contract_ids,
+            contract_ids: config.pools.clone(),
             topics: vec![],
         },
     ));

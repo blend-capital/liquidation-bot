@@ -1,6 +1,7 @@
 {
   "rpc_url": "rpc url",
   "network_passphrase": "Test SDF Network ; September 2015",
+  "db_path": "The path to where you want to store the database files",
   "pools": ["Pool Address 1", "Pool Address 2"],
   "assets": ["Asset Address 1", "Asset Address 2"],
   "backstop": "Backstop Address",
