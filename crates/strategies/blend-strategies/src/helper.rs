@@ -491,7 +491,6 @@ pub async fn get_balance(rpc: &Client, user: String, asset: String) -> Result<i1
 
     let contract_function_result =
         ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
-    println!("Contract function result: {:?}", contract_function_result);
     let mut balance: i128 = 0;
     match &contract_function_result {
         ScVal::I128(value) => balance = value.into(),
