@@ -51,7 +51,7 @@ These strategies does not rely on any contracts.
 You can run the rust tests with the following command:
 
 ```sh
-cargo test
+cargo test --all
 ```
 
 And if you need to regenerate rust bindings for contracts, you can run
