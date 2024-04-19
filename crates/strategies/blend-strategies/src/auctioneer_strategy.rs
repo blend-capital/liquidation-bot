@@ -9,20 +9,19 @@ use crate::{
     db_manager::DbManager,
     error_logger::log_error,
     helper::{
-        decode_scaddress_to_hash, decode_scaddress_to_string, evaluate_user, get_asset_prices_db,
-        get_reserve_config_db, update_rate, user_positions_from_ledger_entry,
+        decode_scaddress_to_string, evaluate_user, get_asset_prices_db, get_reserve_config_db,
+        update_rate, user_positions_from_ledger_entry,
     },
     transaction_builder::BlendTxBuilder,
     types::{Action, Config, Event, UserPositions},
 };
 use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
-use soroban_cli::utils::contract_id_from_str;
 use soroban_rpc::{Client, Event as SorobanEvent};
 use std::{collections::HashMap, str::FromStr, thread::sleep, time::Duration, vec};
 use stellar_xdr::curr::{
-    Hash, LedgerEntryData, LedgerKeyContractData, Limits, ReadXdr, ScAddress, ScMap, ScMapEntry,
-    ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, VecM,
+    AccountId, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
+    ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, Uint256, VecM,
 };
 use tracing::{error, info};
 
@@ -32,22 +31,22 @@ pub struct BlendAuctioneer {
     /// The path to the database directory
     db_manager: DbManager,
     /// Assets in pools
-    assets: Vec<Hash>,
+    assets: Vec<String>,
     /// Vec of Blend pool addresses to create auctions for
-    pools: Vec<Hash>,
+    pools: Vec<String>,
     /// Map pool users and their positions
     /// - only stores users with health factor < 5
     /// - only stores users with relevant assets
     /// HashMap<PoolId, HashMap<UserId, UserPositions>>
-    users: HashMap<Hash, HashMap<String, UserPositions>>,
+    users: HashMap<String, HashMap<String, UserPositions>>,
     /// Our signing address
     us: SigningKey,
     /// Our public key
-    pub us_public: Hash,
+    pub us_public: String,
     // Backstop token address
-    pub backstop_token_address: Hash,
+    pub backstop_token_address: String,
     // Oracle id
-    oracle_id: Hash,
+    oracle_id: String,
     // Oracle Decimals
     oracle_decimals: u32,
 }
@@ -74,7 +73,10 @@ impl BlendAuctioneer {
             pools: config.pools.clone(),
             users: HashMap::new(),
             us: signing_key.clone(),
-            us_public: Hash(signing_key.verifying_key().as_bytes().clone()),
+            us_public: ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
+                signing_key.verifying_key().to_bytes(),
+            ))))
+            .to_string(),
             backstop_token_address: config.backstop_token_address.clone(),
             oracle_id: config.oracle_id.clone(),
             oracle_decimals: config.oracle_decimals,
@@ -129,7 +131,7 @@ impl Strategy<Event, Action> for BlendAuctioneer {
                             info!("retrying soroban event processing");
                             if retry_counter == 100 {
                                 let log = format!(
-                                    "failed to process soroban event: {:?} with error: {}",
+                                    "failed to process soroban event: {:#?} with error: {}\n",
                                     event.clone(),
                                     e
                                 );
@@ -148,7 +150,7 @@ impl Strategy<Event, Action> for BlendAuctioneer {
                             info!("retrying new block event processing");
                             if retry_counter == 100 {
                                 let log = format!(
-                                    "failed to process new block event: {:?} with error: {}",
+                                    "failed to process new block event: {:#?} with error: {}\n",
                                     block.clone(),
                                     e
                                 );
@@ -169,7 +171,7 @@ impl BlendAuctioneer {
     async fn process_soroban_events(&mut self, event: SorobanEvent) -> Result<Vec<Action>> {
         let mut actions = Vec::new();
         //should build pending auctions and remove or modify pending auctions that are filled or partially filled by someone else
-        let pool_id = Hash(contract_id_from_str(&event.contract_id)?);
+        let pool_id = event.contract_id;
         let mut name: String = Default::default();
         //Get contract function name from topics
         let topic = ScVal::from_xdr_base64(event.topic[0].as_bytes(), Limits::none())?;
@@ -180,10 +182,14 @@ impl BlendAuctioneer {
             _ => (),
         }
         let data = ScVal::from_xdr_base64(event.value.as_bytes(), Limits::none())?;
+        info!("Processing event: {}", name.clone());
         //Deserialize event body cases
         match name.as_str() {
             "new_liquidation_auction" => {
-                let user = ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
+                let user = decode_scaddress_to_string(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 // remove user from users list since they are being liquidated
                 self.users
@@ -193,7 +199,10 @@ impl BlendAuctioneer {
             }
             "delete_liquidation_auction" => {
                 // If this was an auction we were planning on filling, remove it from the pending list
-                let user = ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
+                let user = decode_scaddress_to_string(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 // add user back to users
                 match self
@@ -209,8 +218,10 @@ impl BlendAuctioneer {
                 }
             }
             "fill_auction" => {
-                let liquidated_id =
-                    ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
+                let liquidated_id = decode_scaddress_to_string(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
                 let mut auction_type = 0;
                 match ScVal::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())? {
                     ScVal::U32(num) => {
@@ -264,7 +275,10 @@ impl BlendAuctioneer {
                 }
             }
             "bad_debt" => {
-                let user = ScAddress::from_xdr_base64(event.topic[1].as_bytes(), Limits::none())?;
+                let user = decode_scaddress_to_string(&ScVal::from_xdr_base64(
+                    event.topic[1].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 // remove user from users list since their positions were removed
                 self.users
@@ -279,17 +293,18 @@ impl BlendAuctioneer {
                     op: tx_builder.new_bad_debt_auction(),
                     gas_bid_info: None,
                     signing_key: self.us.clone(),
+                    max_retries: 100,
                 }));
             }
             "set_reserve" => {
-                let mut asset_id: Hash = Hash([0; 32]);
+                let mut asset_id: String = Default::default();
                 match &data {
                     ScVal::Vec(vec) => {
                         if let Some(vec) = vec {
                             let address = vec.clone().get(0).unwrap().to_owned();
                             match address {
-                                ScVal::Address(_) => {
-                                    asset_id = decode_scaddress_to_hash(&address);
+                                ScVal::Address(address) => {
+                                    asset_id = address.to_string();
                                 }
                                 _ => (),
                             }
@@ -304,7 +319,7 @@ impl BlendAuctioneer {
                     .await?;
             }
             "supply" => {
-                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                let asset_id = decode_scaddress_to_string(&ScVal::from_xdr_base64(
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
@@ -359,7 +374,7 @@ impl BlendAuctioneer {
                 }
             }
             "withdraw" => {
-                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                let asset_id = decode_scaddress_to_string(&ScVal::from_xdr_base64(
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
@@ -413,11 +428,14 @@ impl BlendAuctioneer {
                 }
             }
             "supply_collateral" => {
-                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                let asset_id = decode_scaddress_to_string(&ScVal::from_xdr_base64(
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
-                let user = ScAddress::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())?;
+                let user = decode_scaddress_to_string(&ScVal::from_xdr_base64(
+                    event.topic[2].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 let supply_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
@@ -480,11 +498,11 @@ impl BlendAuctioneer {
                 }
             }
             "withdraw_collateral" => {
-                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                let asset_id = decode_scaddress_to_string(&ScVal::from_xdr_base64(
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
-                let user = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                let user = decode_scaddress_to_string(&ScVal::from_xdr_base64(
                     event.topic[2].as_bytes(),
                     Limits::none(),
                 )?);
@@ -550,11 +568,14 @@ impl BlendAuctioneer {
                 }
             }
             "borrow" => {
-                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                let asset_id = decode_scaddress_to_string(&ScVal::from_xdr_base64(
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
-                let user = ScAddress::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())?;
+                let user = decode_scaddress_to_string(&ScVal::from_xdr_base64(
+                    event.topic[2].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 let borrow_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
@@ -617,11 +638,14 @@ impl BlendAuctioneer {
                 }
             }
             "repay" => {
-                let asset_id = decode_scaddress_to_hash(&ScVal::from_xdr_base64(
+                let asset_id = decode_scaddress_to_string(&ScVal::from_xdr_base64(
                     event.topic[1].as_bytes(),
                     Limits::none(),
                 )?);
-                let user = ScAddress::from_xdr_base64(event.topic[2].as_bytes(), Limits::none())?;
+                let user = decode_scaddress_to_string(&ScVal::from_xdr_base64(
+                    event.topic[2].as_bytes(),
+                    Limits::none(),
+                )?);
 
                 let repay_amount: i128 = match &data {
                     ScVal::Vec(vec) => {
@@ -732,7 +756,7 @@ impl BlendAuctioneer {
         return Ok(actions);
     }
 
-    async fn get_user_position(&mut self, pool_id: Hash, user_id: &str) -> Result<Option<u64>> {
+    async fn get_user_position(&mut self, pool_id: String, user_id: &str) -> Result<Option<u64>> {
         let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
             ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
                 "Positions",
@@ -741,7 +765,7 @@ impl BlendAuctioneer {
         ])?));
         let position_ledger_key =
             stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
-                contract: ScAddress::Contract(pool_id.clone()),
+                contract: ScAddress::from_str(&pool_id)?,
                 key: reserve_data_key,
                 durability: stellar_xdr::curr::ContractDataDurability::Persistent,
             });
@@ -769,7 +793,8 @@ impl BlendAuctioneer {
                         let user_position =
                             user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager)?;
 
-                        let score = evaluate_user(&pool_id, &user_position, &self.db_manager)?;
+                        let score =
+                            evaluate_user(&pool_id, &user_position, &self.db_manager).unwrap();
                         if score != 1 {
                             self.users
                                 .entry(pool_id.clone())
@@ -784,8 +809,8 @@ impl BlendAuctioneer {
         }
         Ok(None)
     }
-    async fn user_has_liquidation(&mut self, pool: Hash, user: &str) -> Result<bool> {
-        let pool_id = ScAddress::Contract(pool.clone());
+    async fn user_has_liquidation(&mut self, pool: String, user: &str) -> Result<bool> {
+        let pool_id = ScAddress::from_str(&pool)?;
         let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
             ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
                 "Auction",
@@ -832,7 +857,7 @@ impl BlendAuctioneer {
         Ok(false)
     }
 
-    fn act_on_score(&self, user: &str, pool: &Hash, score: u64) -> Option<Action> {
+    fn act_on_score(&self, user: &str, pool: &String, score: u64) -> Option<Action> {
         let tx_builder = BlendTxBuilder {
             contract_id: pool.clone(),
             signing_key: self.us.clone(),
@@ -843,6 +868,7 @@ impl BlendAuctioneer {
                 op: tx_builder.bad_debt(user),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
+                max_retries: 100,
             }));
         }
 
@@ -852,6 +878,7 @@ impl BlendAuctioneer {
                 op: tx_builder.new_liquidation_auction(user, score),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
+                max_retries: 100,
             }));
         }
         None
@@ -862,13 +889,13 @@ impl BlendAuctioneer {
     // - If we do have them tracked and they are adding an unsupported asset or their score is 1 we remove them
     async fn update_user(
         &mut self,
-        pool_id: &Hash,
+        pool_id: &String,
         user_id: &str,
-        asset_id: &Hash,
+        asset_id: &String,
         amount: i128,
         collateral: bool,
     ) -> Result<()> {
-        self.db_manager.add_user(&user_id.to_string())?;
+        self.db_manager.add_user(&user_id.to_string()).unwrap();
         let pool = self.users.entry(pool_id.clone()).or_default();
         if let Some(positions) = pool.get_mut(&user_id.to_string()) {
             if collateral {
@@ -881,7 +908,7 @@ impl BlendAuctioneer {
 
             // user's borrowing power is going up so we should potentially drop them
             if (collateral && amount > 0) || (!collateral && amount < 0) {
-                let score = evaluate_user(&pool_id, &positions, &self.db_manager)?;
+                let score = evaluate_user(&pool_id, &positions, &self.db_manager).unwrap();
                 if score == 1 {
                     pool.remove(&user_id.to_string());
                 }

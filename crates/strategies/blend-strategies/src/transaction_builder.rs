@@ -3,11 +3,11 @@ use std::str::FromStr;
 use ed25519_dalek::SigningKey;
 use soroban_spec_tools::from_string_primitive;
 use stellar_xdr::curr::{
-    Hash, InvokeContractArgs, InvokeHostFunctionOp, Operation, ScAddress, ScMap, ScMapEntry,
+    InvokeContractArgs, InvokeHostFunctionOp, Operation, ScAddress, ScMap, ScMapEntry,
     ScSpecTypeDef, ScSymbol, ScVal, ScVec, VecM,
 };
 pub struct BlendTxBuilder {
-    pub contract_id: Hash,
+    pub contract_id: String,
     pub signing_key: SigningKey,
 }
 
@@ -24,7 +24,7 @@ impl BlendTxBuilder {
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        contract_address: ScAddress::from_str(&self.contract_id).unwrap(),
                         function_name: ScSymbol::try_from("submit").unwrap(),
                         args: VecM::try_from(vec![
                             ScVal::Address(ScAddress::from_str(from).unwrap()),
@@ -45,7 +45,7 @@ impl BlendTxBuilder {
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        contract_address: ScAddress::from_str(&self.contract_id).unwrap(),
                         function_name: ScSymbol::try_from("bad_debt").unwrap(),
                         args: VecM::try_from(vec![ScVal::Address(
                             ScAddress::from_str(user).unwrap(),
@@ -64,7 +64,7 @@ impl BlendTxBuilder {
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        contract_address: ScAddress::from_str(&self.contract_id).unwrap(),
                         function_name: ScSymbol::try_from("new_bad_debt_auction").unwrap(),
                         args: VecM::try_from(vec![]).unwrap(),
                     },
@@ -79,7 +79,7 @@ impl BlendTxBuilder {
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        contract_address: ScAddress::from_str(&self.contract_id).unwrap(),
                         function_name: ScSymbol::try_from("new_liquidation_auction").unwrap(),
                         args: VecM::try_from(vec![
                             ScVal::Address(ScAddress::from_str(user).unwrap()),
@@ -92,18 +92,18 @@ impl BlendTxBuilder {
             }),
         }
     }
-    pub fn get_last_price(&self, asset: &Hash) -> Operation {
+    pub fn get_last_price(&self, asset: &String) -> Operation {
         Operation {
             source_account: None,
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        contract_address: ScAddress::from_str(&self.contract_id).unwrap(),
                         function_name: ScSymbol::try_from("lastprice").unwrap(),
                         args: VecM::try_from(vec![ScVal::Vec(Some(
                             ScVec::try_from(vec![
                                 ScVal::Symbol(ScSymbol::try_from("Stellar").unwrap()),
-                                ScVal::Address(ScAddress::Contract(asset.clone())),
+                                ScVal::Address(ScAddress::from_str(&asset).unwrap()),
                             ])
                             .unwrap(),
                         ))])
@@ -122,7 +122,7 @@ impl BlendTxBuilder {
             body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: stellar_xdr::curr::HostFunction::InvokeContract(
                     InvokeContractArgs {
-                        contract_address: ScAddress::Contract(self.contract_id.clone()),
+                        contract_address: ScAddress::from_str(&self.contract_id).unwrap(),
                         function_name: ScSymbol::try_from("balance").unwrap(),
                         args: VecM::try_from(vec![ScVal::Address(address)]).unwrap(),
                     },

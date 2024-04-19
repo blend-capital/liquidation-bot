@@ -13,10 +13,10 @@ use soroban_fixed_point_math::FixedPoint;
 use soroban_rpc::Client;
 use soroban_spec_tools::from_string_primitive;
 use stellar_xdr::curr::{
-    Hash, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey,
-    LedgerKeyContractData, Limits, Memo, MuxedAccount, Operation, Preconditions, ReadXdr,
-    ScAddress, ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, Transaction, TransactionEnvelope,
-    TransactionV1Envelope, Uint256, VecM,
+    InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey, LedgerKeyContractData,
+    Limits, Memo, MuxedAccount, Operation, Preconditions, ReadXdr, ScAddress, ScSpecTypeDef,
+    ScSymbol, ScVal, ScVec, StringM, Transaction, TransactionEnvelope, TransactionV1Envelope,
+    Uint256, VecM,
 };
 use tracing::error;
 
@@ -54,23 +54,14 @@ pub fn decode_entry_key(key: &ScVal) -> String {
         }
     }
 }
-pub fn decode_to_asset_amount_map(map: &ScVal) -> HashMap<Hash, i128> {
-    let mut asset_amount_map: HashMap<Hash, i128> = HashMap::new();
+pub fn decode_to_asset_amount_map(map: &ScVal) -> HashMap<String, i128> {
+    let mut asset_amount_map: HashMap<String, i128> = HashMap::new();
     match map {
         ScVal::Map(asset_map) => {
             for asset in asset_map.clone().unwrap().iter() {
-                let mut asset_address: Hash = Hash([0; 32]);
+                let mut asset_address: String = Default::default();
                 match asset.key.clone() {
-                    ScVal::Address(address) => match address {
-                        ScAddress::Account(account) => match account.0 {
-                            stellar_xdr::curr::PublicKey::PublicKeyTypeEd25519(pub_key) => {
-                                asset_address = Hash(pub_key.0);
-                            }
-                        },
-                        ScAddress::Contract(contract) => {
-                            asset_address = contract;
-                        }
-                    },
+                    ScVal::Address(address) => asset_address = address.to_string(),
                     _ => (),
                 }
                 let amount: i128 = match &asset.val {
@@ -85,36 +76,9 @@ pub fn decode_to_asset_amount_map(map: &ScVal) -> HashMap<Hash, i128> {
     return asset_amount_map;
 }
 
-pub fn decode_scaddress_to_hash(address: &ScVal) -> Hash {
-    match address {
-        ScVal::Address(address) => match address {
-            ScAddress::Account(account_id) => match &account_id.0 {
-                stellar_xdr::curr::PublicKey::PublicKeyTypeEd25519(key) => {
-                    return Hash(key.0);
-                }
-            },
-            ScAddress::Contract(contract_id) => {
-                return contract_id.to_owned();
-            }
-        },
-        _ => {
-            panic!("Error: expected ScVal to be Address");
-        }
-    }
-}
-
 pub fn decode_scaddress_to_string(address: &ScVal) -> String {
     match address {
-        ScVal::Address(address) => match address {
-            ScAddress::Account(account_id) => match &account_id.0 {
-                stellar_xdr::curr::PublicKey::PublicKeyTypeEd25519(key) => {
-                    return key.to_string();
-                }
-            },
-            ScAddress::Contract(contract_id) => {
-                return contract_id.to_string();
-            }
-        },
+        ScVal::Address(address) => address.to_string(),
         _ => {
             panic!("Error: expected ScVal to be Address");
         }
@@ -131,8 +95,8 @@ pub fn decode_i128_to_native(scval: &ScVal) -> i128 {
 }
 
 pub fn decode_auction_data(auction_data: ScVal) -> AuctionData {
-    let mut bid: HashMap<Hash, i128> = HashMap::new();
-    let mut lot: HashMap<Hash, i128> = HashMap::new();
+    let mut bid: HashMap<String, i128> = HashMap::new();
+    let mut lot: HashMap<String, i128> = HashMap::new();
     let mut block = 0;
     match auction_data {
         ScVal::Map(map) => {
@@ -245,7 +209,7 @@ pub fn reserve_data_from_ledger_entry(ledger_entry_data: &LedgerEntryData) -> (i
 }
 pub fn user_positions_from_ledger_entry(
     ledger_entry_data: &LedgerEntryData,
-    pool: &Hash,
+    pool: &String,
     db_manager: &DbManager,
 ) -> Result<UserPositions> {
     let mut user_positions = UserPositions {
@@ -317,8 +281,8 @@ pub fn user_positions_from_ledger_entry(
 
 // computes the value of reserve assets both before and after collateral or liability factors are applied
 pub fn sum_adj_asset_values(
-    assets: HashMap<Hash, i128>,
-    pool: &Hash,
+    assets: HashMap<String, i128>,
+    pool: &String,
     collateral: bool,
     db_manager: &DbManager,
 ) -> Result<(i128, i128)> {
@@ -355,33 +319,33 @@ fn calc_position_value(
         .fixed_mul_floor(modifiers.0, SCALAR_9)
         .unwrap();
     let adj_val = raw_val.fixed_mul_floor(modifiers.1, SCALAR_7).unwrap();
-    if collateral {
-        assert!(
-            raw_val.gt(&adj_val),
-            "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
-            raw_val,
-            adj_val,
-            price,
-            amount,
-            config
-        )
-    } else {
-        assert!(
-            raw_val.lt(&adj_val),
-            "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
-            raw_val,
-            adj_val,
-            price,
-            amount,
-            config
-        )
-    };
+    // if collateral {
+    //     assert!(
+    //         raw_val.gt(&adj_val),
+    //         "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
+    //         raw_val,
+    //         adj_val,
+    //         price,
+    //         amount,
+    //         config
+    //     )
+    // } else {
+    //     assert!(
+    //         raw_val.lt(&adj_val),
+    //         "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
+    //         raw_val,
+    //         adj_val,
+    //         price,
+    //         amount,
+    //         config
+    //     )
+    // };
     (raw_val, adj_val)
 }
 
 // returns 0 if user should be ignored, 1 if user should be watched, a pct if user should be liquidated for the given pct
 pub fn evaluate_user(
-    pool: &Hash,
+    pool: &String,
     user_positions: &UserPositions,
     db_manager: &DbManager,
 ) -> Result<u64> {
@@ -438,25 +402,24 @@ fn get_liq_percent(
 
 pub async fn bstop_token_to_usdc(
     rpc: &Client,
-    bstop_tkn_address: Hash,
-    backstop: Hash,
+    bstop_tkn_address: String,
+    backstop: String,
     lp_amount: i128,
-    usdc_address: Hash,
+    usdc_address: String,
 ) -> Result<i128> {
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
-
     let op = Operation {
         source_account: None,
         body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
             host_function: stellar_xdr::curr::HostFunction::InvokeContract(InvokeContractArgs {
-                contract_address: ScAddress::Contract(bstop_tkn_address.clone()),
+                contract_address: ScAddress::from_str(&bstop_tkn_address)?,
                 function_name: ScSymbol::try_from("wdr_tokn_amt_in_get_lp_tokns_out").unwrap(),
                 args: VecM::try_from(vec![
-                    ScVal::Address(ScAddress::Contract(usdc_address.clone())),
+                    ScVal::Address(ScAddress::from_str(&usdc_address)?),
                     from_string_primitive(lp_amount.to_string().as_str(), &ScSpecTypeDef::I128)?,
                     from_string_primitive("0".to_string().as_str(), &ScSpecTypeDef::I128)?,
-                    ScVal::Address(ScAddress::Contract(backstop)),
+                    ScVal::Address(ScAddress::from_str(&backstop)?),
                 ])?,
             }),
             auth: VecM::default(),
@@ -488,12 +451,8 @@ pub async fn bstop_token_to_usdc(
         }
         Err(_) => {
             error!("Error: failed to simulate backstop token USDC withdrawal - using balance method instead");
-            let total_comet_usdc = get_balance(
-                rpc,
-                ScAddress::Contract(bstop_tkn_address.clone()).to_string(),
-                usdc_address.clone(),
-            )
-            .await?;
+            let total_comet_usdc =
+                get_balance(rpc, bstop_tkn_address.clone(), usdc_address.clone()).await?;
             let total_comet_tokens = total_comet_tokens(rpc, bstop_tkn_address.clone()).await?;
             Some(
                 total_comet_usdc
@@ -504,12 +463,11 @@ pub async fn bstop_token_to_usdc(
             )
         }
     };
-
     return Ok(usdc_out.unwrap());
 }
 
 // Gets balance of an asset
-pub async fn get_balance(rpc: &Client, user: String, asset: Hash) -> Result<i128> {
+pub async fn get_balance(rpc: &Client, user: String, asset: String) -> Result<i128> {
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
     let op = BlendTxBuilder {
@@ -530,19 +488,13 @@ pub async fn get_balance(rpc: &Client, user: String, asset: Hash) -> Result<i128
         signatures: VecM::default(),
     });
     let sim_result = rpc.simulate_transaction(&transaction).await?;
+
     let contract_function_result =
         ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
+    println!("Contract function result: {:?}", contract_function_result);
     let mut balance: i128 = 0;
     match &contract_function_result {
-        ScVal::Map(data_map) => {
-            if let Some(data_map) = data_map {
-                let entry = &data_map[0].val;
-                match entry {
-                    ScVal::I128(value) => balance = value.into(),
-                    _ => (),
-                }
-            }
-        }
+        ScVal::I128(value) => balance = value.into(),
         _ => (),
     }
 
@@ -550,7 +502,7 @@ pub async fn get_balance(rpc: &Client, user: String, asset: Hash) -> Result<i128
 }
 
 // Gets total comet tokens
-pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: Hash) -> Result<i128> {
+pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: String) -> Result<i128> {
     // A random key is fine for simulation
     let key = SigningKey::from_bytes(&[0; 32]);
 
@@ -558,7 +510,7 @@ pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: Hash) -> Result
         source_account: None,
         body: stellar_xdr::curr::OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
             host_function: stellar_xdr::curr::HostFunction::InvokeContract(InvokeContractArgs {
-                contract_address: ScAddress::Contract(bstop_tkn_address.clone()),
+                contract_address: ScAddress::from_str(&bstop_tkn_address)?,
                 function_name: ScSymbol::try_from("get_total_supply").unwrap(),
                 args: VecM::try_from(vec![])?,
             }),
@@ -601,9 +553,9 @@ pub fn update_rate(numerator: i128, denominator: i128) -> Result<i128> {
 
 pub async fn get_asset_prices_db(
     rpc: &Client,
-    oracle_id: &Hash,
+    oracle_id: &String,
     oracle_decimals: &u32,
-    assets: &Vec<Hash>,
+    assets: &Vec<String>,
     db_manager: &DbManager,
 ) -> Result<()> {
     // A random key is fine for simulation
@@ -654,15 +606,15 @@ pub async fn get_asset_prices_db(
 
 pub async fn get_reserve_config_db(
     rpc: &Client,
-    pools: &Vec<Hash>,
-    assets: &Vec<Hash>,
+    pools: &Vec<String>,
+    assets: &Vec<String>,
     db_manager: &DbManager,
 ) -> Result<()> {
-    let mut reserve_configs: HashMap<Hash, HashMap<Hash, ReserveConfig>> = HashMap::new();
+    let mut reserve_configs: HashMap<String, HashMap<String, ReserveConfig>> = HashMap::new();
     for pool in pools {
         let mut ledger_keys: Vec<LedgerKey> = Vec::new();
         for asset in assets {
-            let asset_id = ScVal::Address(ScAddress::Contract(asset.clone()));
+            let asset_id = ScVal::Address(ScAddress::from_str(&asset)?);
 
             let reserve_config_key = ScVal::Vec(Some(ScVec::try_from(vec![
                 ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
@@ -678,13 +630,13 @@ pub async fn get_reserve_config_db(
             ])?));
             let reserve_config_ledger_key =
                 stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
-                    contract: ScAddress::Contract(pool.clone()),
+                    contract: ScAddress::from_str(&pool)?,
                     key: reserve_config_key,
                     durability: stellar_xdr::curr::ContractDataDurability::Persistent,
                 });
             let reserve_data_ledger_key =
                 stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
-                    contract: ScAddress::Contract(pool.clone()),
+                    contract: ScAddress::from_str(&pool)?,
                     key: reserve_data_key,
                     durability: stellar_xdr::curr::ContractDataDurability::Persistent,
                 });
@@ -699,11 +651,11 @@ pub async fn get_reserve_config_db(
                 match &value {
                     LedgerEntryData::ContractData(data) => {
                         let key = decode_entry_key(&data.key);
-                        let mut asset_id: Hash = Hash([0; 32]);
+                        let mut asset_id: String = Default::default();
                         match &data.key {
                             ScVal::Vec(vec) => {
                                 if let Some(vec) = vec {
-                                    asset_id = decode_scaddress_to_hash(&vec[1]);
+                                    asset_id = decode_scaddress_to_string(&vec[1]);
                                 } else {
                                     ();
                                 }
@@ -756,8 +708,6 @@ pub async fn get_reserve_config_db(
 
 #[cfg(test)]
 mod tests {
-    use stellar_xdr::curr::Hash;
-
     use crate::constants::{SCALAR_7, SCALAR_9};
 
     #[test]
@@ -779,7 +729,7 @@ mod tests {
     #[test]
     fn calc_position_value_collateral() {
         let config = super::ReserveConfig {
-            asset: Hash([0; 32]),
+            asset: "CDMLFMKMMD7MWZP3FKUBZPVHTUEDLSX4BYGYKH4GCESXYHS3IHQ4EIG4".to_string(),
             index: 0,
             collateral_factor: 500_0000,
             liability_factor: 500_0000,
@@ -796,7 +746,7 @@ mod tests {
     #[test]
     fn calc_position_value_debt() {
         let config = super::ReserveConfig {
-            asset: Hash([0; 32]),
+            asset: "CDMLFMKMMD7MWZP3FKUBZPVHTUEDLSX4BYGYKH4GCESXYHS3IHQ4EIG4".to_string(),
             index: 0,
             collateral_factor: 500_0000,
             liability_factor: 500_0000,

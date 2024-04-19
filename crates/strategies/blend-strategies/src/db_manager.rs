@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 use crate::types::ReserveConfig;
 use anyhow::Result;
 use rusqlite::{params, Connection};
-use soroban_cli::utils::contract_id_from_str;
-use stellar_xdr::curr::{Hash, ScAddress};
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -23,7 +21,7 @@ impl DbManager {
         }
     }
 
-    pub fn initialize(&self, assets: &Vec<Hash>) -> Result<()> {
+    pub fn initialize(&self, assets: &Vec<String>) -> Result<()> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
         db.execute(
             "CREATE table if not exists asset_prices (
@@ -49,10 +47,9 @@ impl DbManager {
 
         let placeholder_int = 1i64;
         for asset in assets.clone() {
-            let asset_str = ScAddress::Contract(asset).to_string();
             let result = db.execute(
                 "INSERT INTO asset_prices (address, price) VALUES (?, ?)",
-                params![asset_str, placeholder_int],
+                params![asset, placeholder_int],
             );
             match result {
                 Ok(_) => (),
@@ -76,24 +73,21 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn set_asset_price(&self, asset_id: Hash, price: i128) -> Result<()> {
+    pub fn set_asset_price(&self, asset_id: String, price: i128) -> Result<()> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
         db.execute(
             "UPDATE asset_prices SET price = ?2 WHERE address = ?1",
-            [
-                ScAddress::Contract(asset_id.clone()).to_string(),
-                price.to_string(),
-            ],
+            [asset_id, price.to_string()],
         )?;
         db.close().unwrap();
         Ok(())
     }
 
-    pub fn get_asset_price(&self, asset_id: &Hash) -> Result<i128, rusqlite::Error> {
+    pub fn get_asset_price(&self, asset_id: &String) -> Result<i128, rusqlite::Error> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
         let price_result = db.query_row(
             "SELECT price FROM asset_prices WHERE address = ?",
-            [ScAddress::Contract(asset_id.clone()).to_string()],
+            [asset_id],
             |row| row.get::<_, isize>(0),
         )?;
         db.close().unwrap();
@@ -102,8 +96,8 @@ impl DbManager {
 
     pub fn get_reserve_config_from_asset(
         &self,
-        pool: &Hash,
-        asset: &Hash,
+        pool: &String,
+        asset: &String,
     ) -> Result<ReserveConfig> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
         let result = db.query_row(
@@ -112,9 +106,7 @@ impl DbManager {
             collateralFactor,
             liabilityFactor,
             scalar FROM pool_asset_data WHERE key = ?",
-            [(ScAddress::Contract(asset.clone()).to_string()
-                + &ScAddress::Contract(pool.clone()).to_string())
-                .to_string()],
+            [asset.clone() + pool],
             |row| {
                 Ok(ReserveConfig {
                     asset: asset.clone(),
@@ -130,7 +122,11 @@ impl DbManager {
         Ok(result)
     }
 
-    pub fn get_reserve_config_from_index(&self, pool: &Hash, index: &u32) -> Result<ReserveConfig> {
+    pub fn get_reserve_config_from_index(
+        &self,
+        pool: &String,
+        index: &u32,
+    ) -> Result<ReserveConfig> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
         let result = db.query_row(
             "SELECT address, dRate,
@@ -138,10 +134,10 @@ impl DbManager {
             collateralFactor,
             liabilityFactor,
             scalar FROM pool_asset_data WHERE asset_index = ?1 AND pool_address = ?2",
-            params![index, ScAddress::Contract(pool.clone()).to_string(),],
+            params![index, pool,],
             |row| {
                 Ok(ReserveConfig {
-                    asset: Hash(contract_id_from_str(&row.get::<_, String>(0)?).unwrap()),
+                    asset: row.get::<_, String>(0)?,
                     index: *index,
                     est_d_rate: row.get::<_, isize>(1)? as i128,
                     est_b_rate: row.get::<_, isize>(2)? as i128,
@@ -156,14 +152,13 @@ impl DbManager {
 
     pub fn set_reserve_config(
         &self,
-        pool: &Hash,
-        asset: &Hash,
+        pool: &String,
+        asset: &String,
         config: &ReserveConfig,
     ) -> Result<()> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
-        let pool_address_str = ScAddress::Contract(pool.clone()).to_string();
-        let asset_address_str = ScAddress::Contract(asset.clone()).to_string();
-        let key = (asset_address_str.clone() + &pool_address_str.clone()).to_string();
+
+        let key = asset.clone() + pool;
         db.execute(
             "INSERT OR REPLACE INTO pool_asset_data (key, bRate, dRate, asset_index, collateralFactor, liabilityFactor, scalar, pool_address, address) VALUES (?7, ?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9)",
             params![
@@ -174,8 +169,8 @@ impl DbManager {
                 config.liability_factor,
                 config.scalar as u64,
                 key,
-                pool_address_str,
-                asset_address_str,
+                pool,
+                asset,
             ],
         )?;
         db.close().unwrap();
@@ -184,28 +179,24 @@ impl DbManager {
 
     pub fn update_reserve_config_rate(
         &self,
-        pool_id: &Hash,
-        asset_id: &Hash,
+        pool_id: &String,
+        asset_id: &String,
         rate: i128,
         // b_rate: true if updating b_rate, false if updating d_rate
         rate_type: bool,
     ) -> Result<()> {
         let db = Connection::open(&self.blend_asset_path).unwrap();
-        let key = (ScAddress::Contract(asset_id.clone()).to_string()
-            + &ScAddress::Contract(pool_id.clone()).to_string())
-            .to_string();
+        let key = asset_id.clone() + &pool_id.clone();
         if rate_type {
             db.execute(
                 "UPDATE pool_asset_data SET bRate = ?1 WHERE key = ?2",
                 params![rate as u64, key,],
-            )
-            .unwrap()
+            )?
         } else {
             db.execute(
                 "UPDATE pool_asset_data SET dRate = ?1 WHERE key = ?2",
                 params![rate as u64, key,],
-            )
-            .unwrap()
+            )?
         };
         db.close().unwrap();
         Ok(())
@@ -216,7 +207,7 @@ impl DbManager {
         let mut user_addresses = Vec::new();
 
         {
-            let mut stmt = db.prepare("SELECT address FROM users").unwrap();
+            let mut stmt = db.prepare("SELECT address FROM users")?;
             let users = stmt.query_map([], |row| Ok(row.get::<_, String>(0)?))?;
             for user in users {
                 user_addresses.push(match stellar_strkey::Strkey::from_string(&user?).unwrap() {
