@@ -58,15 +58,6 @@ impl BlendAuctioneer {
         let db_manager = DbManager::new(config.db_path.clone());
         db_manager.initialize(&config.assets)?;
 
-        get_asset_prices_db(
-            &client,
-            &config.oracle_id,
-            &config.oracle_decimals,
-            &config.assets,
-            &db_manager,
-        )
-        .await?;
-        get_reserve_config_db(&client, &config.pools, &config.assets, &db_manager).await?;
         Ok(Self {
             rpc: client,
             db_manager: DbManager::new(config.db_path.clone()),
@@ -85,6 +76,15 @@ impl BlendAuctioneer {
 #[async_trait]
 impl Strategy<Event, Action> for BlendAuctioneer {
     async fn sync_state(&mut self) -> Result<()> {
+        get_asset_prices_db(
+            &self.rpc,
+            &self.oracle_id,
+            &self.oracle_decimals,
+            &self.assets,
+            &self.db_manager,
+        )
+        .await?;
+        get_reserve_config_db(&self.rpc, &self.pools, &self.assets, &self.db_manager).await?;
         let users = self.db_manager.get_users()?;
         for user in users {
             for pool in self.pools.clone() {
@@ -713,6 +713,7 @@ impl BlendAuctioneer {
                     for user in users.iter() {
                         match evaluate_user(pool, user.1, &self.db_manager) {
                             Ok(score) => {
+                                // create liquidation auction if needed
                                 let action = self.act_on_score(&user.0, &pool, score);
                                 if action.is_some() {
                                     info!("Creating liquidation auction for user: {}", user.0);
@@ -723,7 +724,6 @@ impl BlendAuctioneer {
                                 error!("Failed to evaluate user: {} with error: {}", user.0, err)
                             }
                         };
-                        // create liquidation auction if needed
                     }
                 }
             }

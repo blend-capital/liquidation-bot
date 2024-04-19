@@ -1,48 +1,57 @@
-# Opensea Sudo Arb
+# Blend Liquidation & Auction Strategies
 
-A strategy implementing atomic, cross-market NFT arbitrage between Seaport and Sudoswap. At a high level, we listen to a stream of new seaport orders, and compute whether we can atomically fulfill the order and sell the NFT into a sudoswap pool while making a profit. 
+This folder defines 2 strategies that are used to liquidate blend users. At a high level, the strategies monitor user's with non-insignificant leverage ratios as well as oracle prices. They create liquidation auctions for user's when their borrow limit is exceeded, then monitors and attempts to fill the aucitons whenever it's profitable. You don't need to run both of these strategies, but if you elect to run just the liquidator strategy, an additional process needs to be run to update the asset price and data db's as it relies on the auctioneer doing so.
 
-## Strategy 
+## Blend Auctioneer Strategy
+
+This strategy is responsible for monitoring blend users and oracle prices, and creating liquidation auctions for users when their borrow limit is exceeded.
 
 ### Sync
 
-The strategy first syncs its initial state, by rebuilding the state of all Sudoswap pools in memory. We do this as follows: 
+The strategy first syncs its initial state, by storing pool data, asset prices, and user positions in memory. We do this as follows:
 
-1. Starting from the Sudoswap factory deployment block, filter for all `NewPair` events emitted to build a full list of pools.
-2. We batch read quotes for all pools by using a specialized quoter contract  via eth_call bytecode injection.
-3. We update the state of a pair of HashMaps in memory for fast retrival of each NFT collection's best quote. 
+1. Pull the price of all input assets from the oracle contract and store them in the `blend_assets` sql
+2. Pull the reserve configurations of all input pools and assets and store them in the `blend_assets` db
+3. Evaluate all user stored in the `blend_users` db and store their positions in memory if they have significant leverage levels.
 
 ### Processing
 
-After the initial sync is done, we stream the following events: 
+After the initial sync is done, we stream the following events:
 
-1. New Blocks: for every new block, we find all sudo pools that were either touched or created, and update their internal state in memory after getting new quotes. 
-2. Seaport orders: we stream seaport orders, filtering for sell orders on the collections which have valid sudo quotes. We compute whether an arb is available, and if so, submit a transaction to our atomic arb contract. 
+1. New Blocks: Every 10 new blocks we update asset prices and check all user's we're tracking to see if they need to be liquidated. If they do, we create a liquidation auction for them.
+2. Pool Events: we stream events from the blend pools and update the pool data and user positions in memory. We also add new user's to the `blend_users` db and add user positions to memory if they reach a significant leverage level.
 
-## Contracts 
+## Blend Liquidator Strategy
 
-This strategy relies on two contracts:
+This strategy is responsible for monitoring blend liquidation auctions and filling them whenever it's profitable.
 
-1. [`SudoOpenseaArb`](/crates/strategies/opensea-sudo-arb/contracts/src/SudoOpenseaArb.sol): Execute an atomic arb by buying an NFT on seaport by calling `fulfillBasicOrder`, and selling it on Sudoswap by calling `swapNFTsForToken`.
+### Sync
 
-2. [`SudoPairQuoter`](/crates/strategies/opensea-sudo-arb/contracts/src/SudoPairQuoter.sol): Batch read contract that checks whether sudo pools have valid quotes. 
+The strategy first syncs its initial state, by storing the liquidators assets and positions and storing ongoing liquidations in memory. We do this as follows:
 
-## Build and Test 
+1. Pull all liquidator asset balances and store them in memory.
+2. Pull liquidator positions for all pools we're liquidating in and store them in memory.
+3. Pull all ongoing interest auctions and store them in memory.
+4. Pull all ongoing bad debt auctions and store them in memory.
+5. Pull all ongoing liquidation auctions and store them in memory.
 
-In order to run the solidity test, you need access to an alchemy/infura key. You can run tests with the following command: 
+### Processing
 
-```sh
-ETH_MAINNET_HTTP=<YOUR_RPC_URL> forge test --root ./contracts
-```
+After the initial sync is done, we stream the following events:
 
-You can run the rust tests with the following command: 
+1. New Blocks: Whenever we get a new block we check if any of our tracked liquidation auctions can be profitably filled. If they can, we fill them.
+2. Pool Events: We stream events to pick up any new liquidations auctions, and remove one's that we're tracking that have been filled.
+
+## Contracts
+
+These strategies does not rely on any contracts.
+
+## Build and Test
+
+You can run the rust tests with the following command:
 
 ```sh
 cargo test
 ```
 
-And if you need to regenerate rust bindings for contracts, you can run 
-
-```sh
-forge bind --bindings-path ./bindings --root ./contracts --crate-name bindings --overwrite
-```
+And if you need to regenerate rust bindings for contracts, you can run
