@@ -24,6 +24,7 @@ After the initial sync is done, we stream the following events:
 ## Blend Liquidator Strategy
 
 This strategy is responsible for monitoring blend liquidation auctions and filling them whenever it's profitable.
+Note that targeted pools must have deposited collateral by the liquidator account. Liquidations result in position takeovers and will require the liquidator to unwind their positions. This can be done manually or by implementing a strategy.
 
 ### Sync
 
