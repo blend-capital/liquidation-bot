@@ -68,7 +68,7 @@ This will build a Docker image named blend-liquidation-bot. You can run the imag
 To run the docker image run the following command:
 
 ```sh
-docker run --name blend-liquidation-bot --rm --it -v <"Absolute path to config folder">:/opt/liquidation-bot blend-liquidation-bot --private-key S....
+docker run --name blend-liquidation-bot --rm -it -v <"Absolute path to config folder">:/opt/liquidation-bot blend-liquidation-bot --private-key S....
 ```
 
 The docker image will be run in interactive mode with the specified name. To run the image detached replace -it with -d
