@@ -80,3 +80,7 @@ Please replace blend-liquidation-bot and liq-bot with the actual name you want t
 ## Acknowledgements
 
 - [Artemis](https://github.com/paradigmxyz/artemis)
+
+## Disclaimer
+
+Running this liquidation bot carries financial risk. The bot is not guaranteed to be profitable and may result in financial loss. The bot is provided as is and the developers are not responsible for any financial loss incurred by running the bot. It is recommended to run the bot on a testnet before running on mainnet.
