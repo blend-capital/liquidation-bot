@@ -287,8 +287,8 @@ impl BlendLiquidator {
 
                     pending_fill
                         .calc_bad_debt_fill(
-                            self.bankroll.get(&pool_id).unwrap(),
-                            self.min_hf,
+                            &self.db_manager,
+                            &self.wallet,
                             bstop_token_to_usdc(
                                 &self.rpc,
                                 self.backstop_token_address.clone(),
@@ -428,8 +428,8 @@ impl BlendLiquidator {
                         self.min_hf.clone(),
                     )?,
                     1 => pending.calc_bad_debt_fill(
-                        self.bankroll.get(&pending.pool).unwrap(),
-                        self.min_hf,
+                        &self.db_manager,
+                        &self.wallet,
                         bstop_token_to_usdc(
                             &self.rpc,
                             self.backstop_token_address.clone(),
@@ -470,17 +470,33 @@ impl BlendLiquidator {
                         contract_id: pending.pool.clone(),
                         signing_key: self.us.clone(),
                     };
+                    let mut requests: Vec<Request> = vec![Request {
+                        request_type: 6 + pending.auction_type,
+                        address: pending.user.clone(),
+                        amount: pending.pct_to_fill as i128,
+                    }];
 
-                    let op = op_builder.submit(
-                        &liquidator_id,
-                        &liquidator_id,
-                        &liquidator_id,
-                        vec![Request {
-                            request_type: 6 + pending.auction_type,
-                            address: pending.user.clone(),
-                            amount: pending.pct_to_fill as i128,
-                        }],
-                    );
+                    if pending.auction_type == 1 {
+                        requests.append(
+                            &mut pending
+                                .auction_data
+                                .bid
+                                .clone()
+                                .iter()
+                                .map(|(k, v)| Request {
+                                    request_type: 5,
+                                    address: k.clone(),
+                                    amount: v
+                                        .fixed_mul_floor(pending.pct_to_fill as i128, 100)
+                                        .unwrap()
+                                        + 10,
+                                })
+                                .collect(),
+                        )
+                    }
+
+                    let op =
+                        op_builder.submit(&liquidator_id, &liquidator_id, &liquidator_id, requests);
                     actions.push(Action::SubmitTx(SubmitStellarTx {
                         op,
                         gas_bid_info: Some(GasBidInfo {
@@ -675,8 +691,8 @@ impl BlendLiquidator {
                             )
                             .await?;
                             pending_fill.calc_bad_debt_fill(
-                                self.bankroll.get(&pool).unwrap(),
-                                self.min_hf,
+                                &self.db_manager,
+                                &self.wallet,
                                 lot_value,
                             )?;
                             self.pending_fill.push(pending_fill);
