@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::HashMap, env, str::FromStr};
+use std::{collections::HashMap, str::FromStr};
 
 use crate::{
     constants::{SCALAR_7, SCALAR_9},
@@ -19,15 +19,6 @@ use stellar_xdr::curr::{
     Uint256, VecM,
 };
 use tracing::error;
-
-pub fn db_path(db: &str) -> String {
-    if env::var("RUNNING_DOCKER").is_ok() {
-        let docker = "/opt/liquidation-bot/".to_owned();
-        docker + db
-    } else {
-        db.to_string()
-    }
-}
 
 pub fn decode_entry_key(key: &ScVal) -> String {
     match key {
@@ -319,27 +310,7 @@ fn calc_position_value(
         .fixed_mul_floor(modifiers.0, SCALAR_9)
         .unwrap();
     let adj_val = raw_val.fixed_mul_floor(modifiers.1, SCALAR_7).unwrap();
-    // if collateral {
-    //     assert!(
-    //         raw_val.gt(&adj_val),
-    //         "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
-    //         raw_val,
-    //         adj_val,
-    //         price,
-    //         amount,
-    //         config
-    //     )
-    // } else {
-    //     assert!(
-    //         raw_val.lt(&adj_val),
-    //         "raw_val: {}, adj_val: {}, price: {}, amount: {}, config: {:?}",
-    //         raw_val,
-    //         adj_val,
-    //         price,
-    //         amount,
-    //         config
-    //     )
-    // };
+
     (raw_val, adj_val)
 }
 

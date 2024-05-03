@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
 use soroban_rpc::Client;
-use std::{env, fs::OpenOptions, io::Write, thread::sleep, time::Duration};
+use std::{ fs::OpenOptions, io::Write, path::Path, thread::sleep, time::Duration};
 use stellar_strkey::{ed25519::PublicKey as Ed25519PublicKey, Strkey};
 use stellar_xdr::curr::{Memo, Operation, Preconditions, Transaction, Uint256};
 use tracing::{error, info};
@@ -12,6 +12,7 @@ use tracing::{error, info};
 pub struct SorobanExecutor {
     network_passphrase: String,
     rpc: Client,
+    log_path: String,
 }
 
 /// Information about the gas bid for a transaction.
@@ -32,10 +33,11 @@ pub struct SubmitStellarTx {
 }
 
 impl SorobanExecutor {
-    pub async fn new(rpc_url: &str, network_passphrase: &str) -> Self {
+    pub async fn new(rpc_url: &str, network_passphrase: &str, log_path: &str) -> Self {
         Self {
             rpc: Client::new(rpc_url).unwrap(),
             network_passphrase: network_passphrase.to_string(),
+            log_path: log_path.to_string(),
         }
     }
 }
@@ -46,7 +48,7 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
     async fn execute(&self, action: SubmitStellarTx) -> Result<()> {
         let mut retry_counter = 0;
         while retry_counter <= action.max_retries {
-            let result = submit(&self.rpc, &self.network_passphrase, &action).await;
+            let result = submit(&self.rpc, &self.network_passphrase, &action, &self.log_path).await;
             match result {
                 Ok(_) => {
                     return Ok(());
@@ -59,7 +61,7 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
                             "Failed to submit tx: {:?} {:?} with error: {:#?}",
                             action.op, action.gas_bid_info, e
                         );
-                        let file_path = env::current_dir().unwrap().join("error_logs.txt");
+                        let file_path = Path::new(&self.log_path).join("error_logs.txt");
                         let mut output = OpenOptions::new()
                             .append(true)
                             .create(true)
@@ -75,7 +77,7 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
     }
 }
 
-async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx) -> Result<()> {
+async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx, log_path: &str) -> Result<()> {
     let mut seq_num = rpc
         .get_account(
             &Strkey::PublicKeyEd25519(Ed25519PublicKey(
@@ -126,12 +128,12 @@ async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx
         res.status,
         res.envelope
     );
-    log_transaction(&log_msg)?;
+    log_transaction(&log_msg, log_path)?;
     Ok(())
 }
 
-pub fn log_transaction(msg: &str) -> Result<()> {
-    let file_path = env::current_dir().unwrap().join("transaction_logs.txt");
+pub fn log_transaction(msg: &str, log_path: &str) -> Result<()> {
+    let file_path = Path::new(log_path).join("transaction_logs.txt");
 
     let mut output = OpenOptions::new()
         .append(true)
