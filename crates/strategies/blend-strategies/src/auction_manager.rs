@@ -131,9 +131,10 @@ impl OngoingAuction {
                     SCALAR_7,
                 )
                 .unwrap();
-            let ratio = bid_val_in_raw
+            let ratio = 
+                bid_val_in_raw
                 .fixed_div_floor(wallet_balance.clone(), SCALAR_7)
-                .unwrap();
+                .unwrap_or(0);
             if ratio > worst_ratio {
                 worst_ratio = ratio;
                 worst_bid_value = bid_value.clone() + 10;
