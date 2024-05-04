@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
 
     // Set up soroban executor.
     let executor =
-        Box::new(SorobanExecutor::new(&config.rpc_url, &config.network_passphrase.clone()).await);
+        Box::new(SorobanExecutor::new(&config.rpc_url, &config.network_passphrase.clone(), &config.db_path).await);
     let executor = ExecutorMap::new(executor, |action| match action {
         Action::SubmitTx(tx) => Some(tx),
     });
