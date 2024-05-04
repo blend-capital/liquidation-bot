@@ -54,7 +54,7 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
                 Err(e) => {
                     retry_counter += 1;
                     if retry_counter >= action.max_retries {
-                        error!("Failed to submit tx: {:#?}", action.op);
+                        error!("Failed to submit tx: {:?}", action.op);
                         let msg = format!(
                             "Failed to submit tx: {:?} {:?} with error: {:#?}",
                             action.op, action.gas_bid_info, e
@@ -114,10 +114,10 @@ async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx
             None,
         )
         .await?;
-    info!("Submitted tx: {:#?}\n", action.op.body.clone());
+    info!("Submitted tx: {:?}\n", action.op.body.clone());
     info!("Soroban response: {:?}", res.status);
     let log_msg = format!(
-        "Submitted tx: {:#?} {:#?} with response: {:#?} {:?}\n",
+        "Submitted tx: {:?} {:?} with response: {:?} {:?}\n",
         match action.op.body.clone() {
             stellar_xdr::curr::OperationBody::InvokeHostFunction(body) => Some(body.host_function),
             _ => None,

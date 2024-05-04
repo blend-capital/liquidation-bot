@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     constants::SCALAR_7,
     db_manager::DbManager,
@@ -104,36 +106,48 @@ impl OngoingAuction {
     }
     pub fn calc_bad_debt_fill(
         &mut self,
-        our_positions: &UserPositions,
-        min_hf: i128,
+        db_manager: &DbManager,
+        our_wallet: &HashMap<String, i128>,
         lot_value: i128,
     ) -> Result<i128> {
-        let (liabilities_value, adjusted_liability_value) = sum_adj_asset_values(
+        let (liabilities_value, _) = sum_adj_asset_values(
             self.auction_data.bid.clone(),
             &self.pool,
             true,
             &self.db_manager,
         )?;
 
-        let (_, our_collateral) = sum_adj_asset_values(
-            our_positions.collateral.clone(),
-            &self.pool,
-            true,
-            &self.db_manager,
-        )?;
-        let (_, our_debt) = sum_adj_asset_values(
-            our_positions.liabilities.clone(),
-            &self.pool,
-            false,
-            &self.db_manager,
-        )?;
+        let mut worst_ratio = 0;
+        let mut worst_bid_value = 0;
+        let mut worst_wallet_balance = 0;
+        self.auction_data.bid.iter().for_each(|(asset, bid_value)| {
+            let wallet_balance = our_wallet.get(asset).unwrap_or(&0);
+            let bid_val_in_raw = bid_value
+                .fixed_mul_floor(
+                    db_manager
+                        .get_reserve_config_from_asset(&self.pool, asset)
+                        .unwrap()
+                        .est_d_rate,
+                    SCALAR_7,
+                )
+                .unwrap();
+            let ratio = 
+                bid_val_in_raw
+                .fixed_div_floor(wallet_balance.clone(), SCALAR_7)
+                .unwrap_or(0);
+            if ratio > worst_ratio {
+                worst_ratio = ratio;
+                worst_bid_value = bid_value.clone() + 10;
+                worst_wallet_balance = wallet_balance.clone();
+            }
+        });
 
         Ok(self.set_percent_and_target(
             lot_value,
             liabilities_value,
-            adjusted_liability_value,
+            worst_bid_value,
             0,
-            get_max_delta_hf(our_collateral, our_debt, adjusted_liability_value, min_hf),
+            worst_wallet_balance,
         ))
     }
     pub fn partial_fill_update(&mut self, fill_percentage: u64) {
