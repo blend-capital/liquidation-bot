@@ -4,7 +4,7 @@ use artemis_core::{
     collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
 };
 use serde::Deserialize;
-use soroban_rpc::Event as SorobanEvent;
+use stellar_rpc_client::Event as SorobanEvent;
 /// Core Event enum for the current strategy.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -25,7 +25,8 @@ pub struct Config {
     pub network_passphrase: String,
     pub db_path: String,
     pub pools: Vec<String>,
-    pub assets: Vec<String>,
+    pub supported_collateral: Vec<String>,
+    pub supported_liabilities: Vec<String>,
     pub backstop: String,
     pub backstop_token_address: String,
     pub usdc_token_address: String,

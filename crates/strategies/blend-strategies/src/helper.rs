@@ -10,7 +10,7 @@ use crate::{
 use anyhow::{Error, Result};
 use ed25519_dalek::SigningKey;
 use soroban_fixed_point_math::FixedPoint;
-use soroban_rpc::Client;
+use stellar_rpc_client::Client;
 use soroban_spec_tools::from_string_primitive;
 use stellar_xdr::curr::{
     InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey, LedgerKeyContractData,
@@ -574,103 +574,119 @@ pub async fn get_asset_prices_db(
     Ok(())
 }
 
-pub async fn get_reserve_config_db(
+pub async fn get_reserve_list(rpc: &Client, pool: &String) -> Result<Vec<String>> {
+    let mut assets: Vec<String> = Vec::new();
+    let reserve_list_entry = rpc.get_ledger_entries(&[stellar_xdr::curr::LedgerKey::ContractData(
+        LedgerKeyContractData {
+            contract: ScAddress::from_str(&pool)?,
+            key: ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str("ResList")?))),
+            durability: stellar_xdr::curr::ContractDataDurability::Persistent,
+        },
+    )])
+    .await?;
+    if let Some(entries) = reserve_list_entry.entries {
+        if let Some(entry) = entries.get(0) {
+            let value = LedgerEntryData::from_xdr_base64(entry.xdr.clone(), Limits::none())?;
+            match value {
+                LedgerEntryData::ContractData(data) => match data.val {
+                    ScVal::Vec(vec) => {
+                        vec.unwrap().iter().for_each(|entry| {
+                            assets.push(decode_scaddress_to_string(entry));
+                        });
+                    }
+                    _ => error!("Error: expected LedgerEntryData to be Vec"),
+                },
+                _ => error!("Error: expected LedgerEntryData to be ContractData"),
+            }
+        }
+    }
+    Ok(assets)
+}
+
+pub async fn load_reserve_configs(
     rpc: &Client,
-    pools: &Vec<String>,
+    pool: &String,
     assets: &Vec<String>,
     db_manager: &DbManager,
 ) -> Result<()> {
     let mut reserve_configs: HashMap<String, HashMap<String, ReserveConfig>> = HashMap::new();
-    for pool in pools {
-        let mut ledger_keys: Vec<LedgerKey> = Vec::new();
-        for asset in assets {
-            let asset_id = ScVal::Address(ScAddress::from_str(&asset)?);
+    let mut ledger_keys: Vec<LedgerKey> = Vec::new();
+    for asset in assets {
+        let asset_id = ScVal::Address(ScAddress::from_str(&asset)?);
 
-            let reserve_config_key = ScVal::Vec(Some(ScVec::try_from(vec![
-                ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
-                    "ResConfig",
-                )?))),
-                asset_id.clone(),
-            ])?));
-            let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
-                ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
-                    "ResData",
-                )?))),
-                asset_id,
-            ])?));
-            let reserve_config_ledger_key =
-                stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
-                    contract: ScAddress::from_str(&pool)?,
-                    key: reserve_config_key,
-                    durability: stellar_xdr::curr::ContractDataDurability::Persistent,
-                });
-            let reserve_data_ledger_key =
-                stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
-                    contract: ScAddress::from_str(&pool)?,
-                    key: reserve_data_key,
-                    durability: stellar_xdr::curr::ContractDataDurability::Persistent,
-                });
-            ledger_keys.push(reserve_config_ledger_key);
-            ledger_keys.push(reserve_data_ledger_key);
-        }
-
-        let result = rpc.get_ledger_entries(&ledger_keys).await?;
-        if let Some(entries) = result.entries {
-            for entry in entries {
-                let value = LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none())?;
-                match &value {
-                    LedgerEntryData::ContractData(data) => {
-                        let key = decode_entry_key(&data.key);
-                        let mut asset_id: String = Default::default();
-                        match &data.key {
-                            ScVal::Vec(vec) => {
-                                if let Some(vec) = vec {
-                                    asset_id = decode_scaddress_to_string(&vec[1]);
-                                } else {
-                                    ();
-                                }
-                            }
-                            _ => (),
-                        }
-
-                        let res_config = reserve_configs
-                            .entry(pool.clone())
-                            .or_default()
-                            .entry(asset_id.clone())
-                            .or_insert(ReserveConfig::default(asset_id.clone()));
-                        match key.as_str() {
-                            "ResData" => {
-                                let (b_rate, d_rate) = reserve_data_from_ledger_entry(&value);
-
-                                res_config.est_b_rate = b_rate;
-                                res_config.est_d_rate = d_rate;
-                            }
-                            "ResConfig" => {
-                                let (index, collateral_factor, liability_factor, scalar) =
-                                    reserve_config_from_ledger_entry(&value);
-                                res_config.index = index;
-                                res_config.collateral_factor = collateral_factor;
-                                res_config.liability_factor = liability_factor;
-                                res_config.scalar = scalar;
-                            }
-                            _ => error!("Error: found unexpected key {}", key),
-                        }
-                    }
-                    _ => (),
-                }
-            }
-        }
+        let reserve_config_key = ScVal::Vec(Some(ScVec::try_from(vec![
+            ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                "ResConfig",
+            )?))),
+            asset_id.clone(),
+        ])?));
+        let reserve_data_key = ScVal::Vec(Some(ScVec::try_from(vec![
+            ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                "ResData",
+            )?))),
+            asset_id,
+        ])?));
+        let reserve_config_ledger_key =
+            stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
+                contract: ScAddress::from_str(&pool)?,
+                key: reserve_config_key,
+                durability: stellar_xdr::curr::ContractDataDurability::Persistent,
+            });
+        let reserve_data_ledger_key =
+            stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
+                contract: ScAddress::from_str(&pool)?,
+                key: reserve_data_key,
+                durability: stellar_xdr::curr::ContractDataDurability::Persistent,
+            });
+        ledger_keys.push(reserve_config_ledger_key);
+        ledger_keys.push(reserve_data_ledger_key);
     }
-    for pool in pools {
-        for asset in assets {
-            let res_config = match reserve_configs.get(pool).unwrap().get(asset) {
-                Some(config) => config,
-                None => {
-                    continue;
-                }
-            };
 
-            db_manager.set_reserve_config(pool, asset, res_config)?;
+    let result = rpc.get_ledger_entries(&ledger_keys).await?;
+    if let Some(entries) = result.entries {
+        for entry in entries {
+            let value = LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none())?;
+            match &value {
+                LedgerEntryData::ContractData(data) => {
+                    let key = decode_entry_key(&data.key);
+                    let mut asset_id: String = Default::default();
+                    match &data.key {
+                        ScVal::Vec(vec) => {
+                            if let Some(vec) = vec {
+                                asset_id = decode_scaddress_to_string(&vec[1]);
+                            } else {
+                                ();
+                            }
+                        }
+                        _ => (),
+                    }
+
+                    let res_config = reserve_configs
+                        .entry(pool.clone())
+                        .or_default()
+                        .entry(asset_id.clone())
+                        .or_insert(ReserveConfig::default(asset_id.clone()));
+                    match key.as_str() {
+                        "ResData" => {
+                            let (b_rate, d_rate) = reserve_data_from_ledger_entry(&value);
+
+                            res_config.est_b_rate = b_rate;
+                            res_config.est_d_rate = d_rate;
+                        }
+                        "ResConfig" => {
+                            let (index, collateral_factor, liability_factor, scalar) =
+                                reserve_config_from_ledger_entry(&value);
+                            res_config.index = index;
+                            res_config.collateral_factor = collateral_factor;
+                            res_config.liability_factor = liability_factor;
+                            res_config.scalar = scalar;
+                        }
+                        _ => error!("Error: found unexpected key {}", key),
+                    }
+                    db_manager.set_reserve_config(pool, &asset_id, res_config)?;
+                }
+                _ => (),
+            }
         }
     }
     Ok(())

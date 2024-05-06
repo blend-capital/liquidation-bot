@@ -15,7 +15,7 @@ use blend_strategies::{
 };
 use clap::Parser;
 use ed25519_dalek::SigningKey;
-use soroban_rpc::EventType;
+use stellar_rpc_client::EventType;
 use stellar_strkey::ed25519::PrivateKey;
 
 use serde_json;
