@@ -37,8 +37,10 @@ pub struct BlendLiquidator {
     rpc: Client,
     /// The path to the db directory
     db_manager: DbManager,
-    /// Assets we're interested in
-    assets: Vec<String>,
+    /// The supported collateral assets
+    supported_collateral: Vec<String>,
+    /// The supported liability assets
+    supported_liabilities: Vec<String>,
     /// Vec of Blend pool addresses to bid on auctions in
     pools: Vec<String>,
     /// Backstop ID
@@ -71,11 +73,14 @@ impl BlendLiquidator {
     pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
         let db_manager = DbManager::new(config.db_path.clone());
-        db_manager.initialize(&config.assets)?;
+        let mut assets = config.supported_collateral.clone();
+        assets.extend(config.supported_liabilities.clone());
+        db_manager.initialize(&assets)?;
         Ok(Self {
             rpc: client,
             db_manager,
-            assets: config.assets.clone(),
+            supported_collateral: config.supported_collateral.clone(),
+            supported_liabilities: config.supported_liabilities.clone(),
             pools: config.pools.clone(),
             backstop_id: config.backstop.clone(),
             bid_percentage: config.bid_percentage,
@@ -100,7 +105,7 @@ impl BlendLiquidator {
 impl Strategy<Event, Action> for BlendLiquidator {
     async fn sync_state(&mut self) -> Result<()> {
         // Get our wallet assets
-        for asset in self.assets.clone().iter() {
+        for asset in self.supported_collateral.clone().iter() {
             match get_balance(&self.rpc, self.us_public.clone(), asset.clone()).await {
                 Ok(balance) => {
                     self.wallet.insert(asset.clone(), balance);
@@ -280,7 +285,7 @@ impl BlendLiquidator {
                 //Bad debt auction
                 // we only care about bid here
                 if auction_type == 1
-                    && self.validate_assets(auction_data.bid.clone(), HashMap::new())
+                    && self.validate_assets(HashMap::new(),auction_data.bid.clone() )
                 {
                     //update our positions
                     self.get_our_position(pool_id.clone()).await.unwrap();
@@ -669,7 +674,7 @@ impl BlendLiquidator {
                 match &value {
                     LedgerEntryData::ContractData(data) => {
                         let auction_data = decode_auction_data(data.val.clone());
-                        if self.validate_assets(auction_data.bid.clone(), HashMap::new()) {
+                        if self.validate_assets(HashMap::new(),auction_data.bid.clone()) {
                             let mut pending_fill = OngoingAuction::new(
                                 pool.clone(),
                                 self.backstop_id.clone(),
@@ -792,11 +797,17 @@ impl BlendLiquidator {
     // validates assets in two hashmaps of assets and amounts - common pattern
     fn validate_assets(
         &self,
-        asset1: HashMap<String, i128>,
-        asset2: HashMap<String, i128>,
+        lot: HashMap<String, i128>,
+        bid: HashMap<String, i128>,
     ) -> bool {
-        for asset in asset1.keys().chain(asset2.keys()) {
-            if !self.assets.contains(asset) {
+        for asset in lot.keys() {
+            if !self.supported_liabilities.contains(asset) {
+                return false;
+            }
+        
+        }
+        for asset in bid.keys(){
+            if !self.supported_collateral.contains(asset) {
                 return false;
             }
         }
