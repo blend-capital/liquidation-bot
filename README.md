@@ -32,9 +32,11 @@ The config file contains the configuration parameters for the liquidator and auc
     "CB6S4WFBMOJWF7ALFTNO3JJ2FUJGWYXQF3KLAN5MXZIHHCCAU23CZQPN",
     "CB7SS5VTUQZGPDWPQKD4ZT4NSDX4BR5PJ55OE3GWZZYV3I5PAZBZ7CY5"
   ],
-  "assets": [
+  "supported_collateral": [
     "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
-    "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+  ],
+  "supported_liabilities": [
     "CAP5AMC2OHNVREO66DFIN6DHJMPOBAJ2KCDDIMFBR7WWJH5RZBFM3UEI",
     "CAZAQB3D7KSLSNOSQKYD2V4JP5V2Y3B4RDJZRLBFCCIXDCTE3WHSY3UE"
   ],
@@ -50,6 +52,8 @@ The config file contains the configuration parameters for the liquidator and auc
 ```
 
 The min_hf represents the minimum health factor of the liquidator in 9 decimals. The required_profit field is the desired profit on liquidations represented in 9 decimals.
+
+The supported_collateral field represents the assets that the liquidator holds and will be used to cover the auction bid. The supported_liabilities represent the assets that the liquidator will receive from the lot. These controls allow the liquidator to choose what assets they interact with.
 
 ## Docker Image
 
