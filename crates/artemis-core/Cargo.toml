@@ -9,7 +9,7 @@ edition = "2021"
 
 ## stellar
 stellar-xdr = { workspace = true}
-soroban-rpc = {workspace = true}
+stellar-rpc-client = {workspace = true}
 ed25519-dalek = "=2.0.0"
 stellar-strkey = "0.0.7"
 

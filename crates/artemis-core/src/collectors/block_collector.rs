@@ -2,7 +2,7 @@ use crate::types::{Collector, CollectorStream};
 use anyhow::Result;
 use async_trait::async_trait;
 use core::time;
-use soroban_rpc::Client;
+use stellar_rpc_client::Client;
 use std::thread::sleep;
 use tokio::sync::broadcast::{self};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};

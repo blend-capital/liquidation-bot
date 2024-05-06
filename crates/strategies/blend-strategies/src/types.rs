@@ -4,7 +4,7 @@ use artemis_core::{
     collectors::block_collector::NewBlock, executors::soroban_executor::SubmitStellarTx,
 };
 use serde::Deserialize;
-use soroban_rpc::Event as SorobanEvent;
+use stellar_rpc_client::Event as SorobanEvent;
 /// Core Event enum for the current strategy.
 #[derive(Debug, Clone)]
 pub enum Event {

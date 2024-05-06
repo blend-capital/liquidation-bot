@@ -4,7 +4,7 @@ use std::thread::sleep;
 use crate::types::{Collector, CollectorStream};
 use anyhow::Result;
 use async_trait::async_trait;
-use soroban_rpc::{Client, Event, EventStart, EventType, GetEventsResponse};
+use stellar_rpc_client::{Client, Event, EventStart, EventType, GetEventsResponse};
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 #[derive(Debug, Clone)]

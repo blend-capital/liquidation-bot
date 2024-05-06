@@ -10,7 +10,7 @@ use crate::{
 use anyhow::{Error, Result};
 use ed25519_dalek::SigningKey;
 use soroban_fixed_point_math::FixedPoint;
-use soroban_rpc::Client;
+use stellar_rpc_client::Client;
 use soroban_spec_tools::from_string_primitive;
 use stellar_xdr::curr::{
     InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey, LedgerKeyContractData,

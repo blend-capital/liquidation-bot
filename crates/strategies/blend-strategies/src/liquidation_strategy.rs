@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use core::panic;
 use ed25519_dalek::SigningKey;
 use soroban_fixed_point_math::FixedPoint;
-use soroban_rpc::{Client, Event as SorobanEvent};
+use stellar_rpc_client::{Client, Event as SorobanEvent};
 use soroban_spec_tools::from_string_primitive;
 use std::{
     thread::sleep,

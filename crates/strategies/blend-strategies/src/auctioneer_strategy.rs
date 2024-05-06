@@ -17,7 +17,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
-use soroban_rpc::{Client, Event as SorobanEvent};
+use stellar_rpc_client::{Client, Event as SorobanEvent};
 use std::{collections::HashMap, str::FromStr, thread::sleep, time::Duration, vec};
 use stellar_xdr::curr::{
     AccountId, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
@@ -86,7 +86,7 @@ impl Strategy<Event, Action> for BlendAuctioneer {
             &self.db_manager,
         )
         .await?;
-        get_reserve_config_db(&self.rpc, &self.pools, &self.assets, &self.db_manager).await?;
+        get_reserve_config_db(&self.rpc, &self.pools, &self.assets, &self.db_manager).await.unwrap();
         let users = self.db_manager.get_users()?;
         for user in users {
             for pool in self.pools.clone() {
@@ -771,11 +771,11 @@ impl BlendAuctioneer {
         let result = self
             .rpc
             .get_ledger_entries(&vec![position_ledger_key])
-            .await?;
+            .await.unwrap();
         if let Some(entries) = result.entries {
             for entry in entries {
                 let value: LedgerEntryData =
-                    LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none())?;
+                    LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
 
                 match &value {
                     LedgerEntryData::ContractData(data) => {
@@ -790,7 +790,7 @@ impl BlendAuctioneer {
                             _ => return Ok(None),
                         };
                         let user_position =
-                            user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager)?;
+                            user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager).unwrap();
 
                         let score =
                             evaluate_user(&pool_id, &user_position, &self.db_manager).unwrap();
