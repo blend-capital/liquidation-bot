@@ -19,13 +19,13 @@ use async_trait::async_trait;
 use core::panic;
 use ed25519_dalek::SigningKey;
 use soroban_fixed_point_math::FixedPoint;
-use stellar_rpc_client::{Client, Event as SorobanEvent};
 use soroban_spec_tools::from_string_primitive;
 use std::{
     thread::sleep,
     time::Duration,
     {collections::HashMap, str::FromStr, vec},
 };
+use stellar_rpc_client::{Client, Event as SorobanEvent};
 use stellar_xdr::curr::{
     AccountId, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
     ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, Uint256, VecM,
@@ -285,7 +285,7 @@ impl BlendLiquidator {
                 //Bad debt auction
                 // we only care about bid here
                 if auction_type == 1
-                    && self.validate_assets(HashMap::new(),auction_data.bid.clone() )
+                    && self.validate_assets(HashMap::new(), auction_data.bid.clone())
                 {
                     //update our positions
                     self.get_our_position(pool_id.clone()).await.unwrap();
@@ -674,7 +674,7 @@ impl BlendLiquidator {
                 match &value {
                     LedgerEntryData::ContractData(data) => {
                         let auction_data = decode_auction_data(data.val.clone());
-                        if self.validate_assets(HashMap::new(),auction_data.bid.clone()) {
+                        if self.validate_assets(HashMap::new(), auction_data.bid.clone()) {
                             let mut pending_fill = OngoingAuction::new(
                                 pool.clone(),
                                 self.backstop_id.clone(),
@@ -795,19 +795,14 @@ impl BlendLiquidator {
     }
 
     // validates assets in two hashmaps of assets and amounts - common pattern
-    fn validate_assets(
-        &self,
-        lot: HashMap<String, i128>,
-        bid: HashMap<String, i128>,
-    ) -> bool {
+    fn validate_assets(&self, lot: HashMap<String, i128>, bid: HashMap<String, i128>) -> bool {
         for asset in lot.keys() {
-            if !self.supported_liabilities.contains(asset) {
+            if !self.supported_collateral.contains(asset) {
                 return false;
             }
-        
         }
-        for asset in bid.keys(){
-            if !self.supported_collateral.contains(asset) {
+        for asset in bid.keys() {
+            if !self.supported_liabilities.contains(asset) {
                 return false;
             }
         }
