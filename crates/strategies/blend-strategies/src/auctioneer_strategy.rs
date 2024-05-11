@@ -9,15 +9,16 @@ use crate::{
     db_manager::DbManager,
     error_logger::log_error,
     helper::{
-        decode_scaddress_to_string, evaluate_user, get_asset_prices_db, get_reserve_list, load_reserve_configs, update_rate, user_positions_from_ledger_entry
+        decode_scaddress_to_string, evaluate_user, get_asset_prices_db, get_reserve_list,
+        load_reserve_configs, update_rate, user_positions_from_ledger_entry,
     },
     transaction_builder::BlendTxBuilder,
     types::{Action, Config, Event, UserPositions},
 };
 use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
-use stellar_rpc_client::{Client, Event as SorobanEvent};
 use std::{collections::HashMap, str::FromStr, thread::sleep, time::Duration, vec};
+use stellar_rpc_client::{Client, Event as SorobanEvent};
 use stellar_xdr::curr::{
     AccountId, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
     ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, Uint256, VecM,
@@ -54,7 +55,11 @@ impl BlendAuctioneer {
     pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
         let db_manager = DbManager::new(config.db_path.clone());
-        let assets = [config.supported_collateral.clone(), config.supported_liabilities.clone()].concat();
+        let assets = [
+            config.supported_collateral.clone(),
+            config.supported_liabilities.clone(),
+        ]
+        .concat();
         db_manager.initialize(&assets)?;
 
         Ok(Self {
@@ -87,8 +92,10 @@ impl Strategy<Event, Action> for BlendAuctioneer {
         )
         .await?;
         for pool in &self.pools {
-            let assets =  get_reserve_list(&self.rpc, pool).await?;
-            load_reserve_configs(&self.rpc, pool, &assets, &self.db_manager).await.unwrap();
+            let assets = get_reserve_list(&self.rpc, pool).await?;
+            load_reserve_configs(&self.rpc, pool, &assets, &self.db_manager)
+                .await
+                .unwrap();
         }
         let users = self.db_manager.get_users()?;
         for user in users {
@@ -365,13 +372,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -419,13 +421,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -489,13 +486,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -559,13 +551,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -626,16 +613,11 @@ impl BlendAuctioneer {
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, false)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -696,16 +678,11 @@ impl BlendAuctioneer {
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, false)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
