@@ -282,7 +282,7 @@ impl DbManager {
             .join(",");
 
         match db.execute(
-            "INSERT INTO filled_auctions (block,lot_assets,lot_amounts,bid_assets,bid_amounts,percent_filled) VALUES (?1)",
+            "INSERT INTO filled_auctions (block,lot_assets,lot_amounts,bid_assets,bid_amounts,percent_filled) VALUES (?1,?2,?3,?4,?5,?6)",
             [
                 fill_block.to_string(),
                 lot_assets,
