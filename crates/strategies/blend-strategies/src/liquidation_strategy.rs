@@ -5,7 +5,7 @@ use crate::{
     error_logger::log_error,
     helper::{
         bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_string, get_balance,
-        user_positions_from_ledger_entry,
+        user_positions_from_ledger_entry, validate_assets,
     },
     transaction_builder::{BlendTxBuilder, Request},
     types::{Action, Config, Event, UserPositions},
@@ -230,7 +230,12 @@ impl BlendLiquidator {
 
                 let auction_data = decode_auction_data(data);
 
-                if self.validate_assets(auction_data.lot.clone(), auction_data.bid.clone()) {
+                if validate_assets(
+                    &auction_data.lot,
+                    &auction_data.bid,
+                    &self.supported_collateral,
+                    &self.supported_liabilities,
+                ) {
                     //update our positions
                     self.get_our_position(pool_id.clone()).await.unwrap();
 
@@ -285,7 +290,12 @@ impl BlendLiquidator {
                 //Bad debt auction
                 // we only care about bid here
                 if auction_type == 1
-                    && self.validate_assets(HashMap::new(), auction_data.bid.clone())
+                    && validate_assets(
+                        &HashMap::new(),
+                        &auction_data.bid,
+                        &self.supported_collateral,
+                        &self.supported_liabilities,
+                    )
                 {
                     //update our positions
                     self.get_our_position(pool_id.clone()).await.unwrap();
@@ -312,7 +322,12 @@ impl BlendLiquidator {
                     info!(" New pending bad debt fill: {:?}", pending_fill.clone());
                     self.pending_fill.push(pending_fill);
                     //we only care about lot here
-                } else if self.validate_assets(auction_data.lot.clone(), HashMap::new()) {
+                } else if validate_assets(
+                    &auction_data.lot,
+                    &HashMap::new(),
+                    &self.supported_collateral,
+                    &self.supported_liabilities,
+                ) {
                     //update our wallet
                     match get_balance(
                         &self.rpc,
@@ -602,8 +617,12 @@ impl BlendLiquidator {
                     LedgerEntryData::ContractData(data) => {
                         let auction_data = decode_auction_data(data.val.clone());
                         info!("Found outstanding user liquidation auction for: {:?}", user);
-                        if self.validate_assets(auction_data.lot.clone(), auction_data.bid.clone())
-                        {
+                        if validate_assets(
+                            &auction_data.lot,
+                            &auction_data.bid,
+                            &self.supported_collateral,
+                            &self.supported_liabilities,
+                        ) {
                             let mut pending_fill = OngoingAuction::new(
                                 pool.clone(),
                                 user.clone(),
@@ -674,7 +693,12 @@ impl BlendLiquidator {
                 match &value {
                     LedgerEntryData::ContractData(data) => {
                         let auction_data = decode_auction_data(data.val.clone());
-                        if self.validate_assets(HashMap::new(), auction_data.bid.clone()) {
+                        if validate_assets(
+                            &HashMap::new(),
+                            &auction_data.bid,
+                            &self.supported_collateral,
+                            &self.supported_liabilities,
+                        ) {
                             let mut pending_fill = OngoingAuction::new(
                                 pool.clone(),
                                 self.backstop_id.clone(),
@@ -753,7 +777,12 @@ impl BlendLiquidator {
                 match &value {
                     LedgerEntryData::ContractData(data) => {
                         let auction_data = decode_auction_data(data.val.clone());
-                        if self.validate_assets(auction_data.lot.clone(), HashMap::new()) {
+                        if validate_assets(
+                            &auction_data.lot,
+                            &HashMap::new(),
+                            &self.supported_collateral,
+                            &self.supported_liabilities,
+                        ) {
                             let mut pending_fill = OngoingAuction::new(
                                 pool.clone(),
                                 self.backstop_id.clone(),
@@ -792,20 +821,5 @@ impl BlendLiquidator {
         }
 
         Ok(())
-    }
-
-    // validates assets in two hashmaps of assets and amounts - common pattern
-    fn validate_assets(&self, lot: HashMap<String, i128>, bid: HashMap<String, i128>) -> bool {
-        for asset in lot.keys() {
-            if !self.supported_collateral.contains(asset) {
-                return false;
-            }
-        }
-        for asset in bid.keys() {
-            if !self.supported_liabilities.contains(asset) {
-                return false;
-            }
-        }
-        return true;
     }
 }

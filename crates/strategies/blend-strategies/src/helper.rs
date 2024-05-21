@@ -10,8 +10,8 @@ use crate::{
 use anyhow::{Error, Result};
 use ed25519_dalek::SigningKey;
 use soroban_fixed_point_math::FixedPoint;
-use stellar_rpc_client::Client;
 use soroban_spec_tools::from_string_primitive;
+use stellar_rpc_client::Client;
 use stellar_xdr::curr::{
     InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey, LedgerKeyContractData,
     Limits, Memo, MuxedAccount, Operation, Preconditions, ReadXdr, ScAddress, ScSpecTypeDef,
@@ -318,8 +318,18 @@ fn calc_position_value(
 pub fn evaluate_user(
     pool: &String,
     user_positions: &UserPositions,
+    supported_collateral: &Vec<String>,
+    supported_liabilities: &Vec<String>,
     db_manager: &DbManager,
 ) -> Result<u64> {
+    if !validate_assets(
+        &user_positions.collateral,
+        &user_positions.liabilities,
+        supported_collateral,
+        supported_liabilities,
+    ) {
+        return Ok(1);
+    }
     let (collateral_value, adj_collateral_value) =
         sum_adj_asset_values(user_positions.collateral.clone(), pool, true, db_manager)?;
     let (liabilities_value, adj_liabilities_value) =
@@ -576,14 +586,17 @@ pub async fn get_asset_prices_db(
 
 pub async fn get_reserve_list(rpc: &Client, pool: &String) -> Result<Vec<String>> {
     let mut assets: Vec<String> = Vec::new();
-    let reserve_list_entry = rpc.get_ledger_entries(&[stellar_xdr::curr::LedgerKey::ContractData(
-        LedgerKeyContractData {
-            contract: ScAddress::from_str(&pool)?,
-            key: ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str("ResList")?))),
-            durability: stellar_xdr::curr::ContractDataDurability::Persistent,
-        },
-    )])
-    .await?;
+    let reserve_list_entry = rpc
+        .get_ledger_entries(&[stellar_xdr::curr::LedgerKey::ContractData(
+            LedgerKeyContractData {
+                contract: ScAddress::from_str(&pool)?,
+                key: ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                    "ResList",
+                )?))),
+                durability: stellar_xdr::curr::ContractDataDurability::Persistent,
+            },
+        )])
+        .await?;
     if let Some(entries) = reserve_list_entry.entries {
         if let Some(entry) = entries.get(0) {
             let value = LedgerEntryData::from_xdr_base64(entry.xdr.clone(), Limits::none())?;
@@ -690,6 +703,26 @@ pub async fn load_reserve_configs(
         }
     }
     Ok(())
+}
+
+// validates assets in two hashmaps of assets and amounts - common pattern
+pub fn validate_assets(
+    lot: &HashMap<String, i128>,
+    bid: &HashMap<String, i128>,
+    supported_collateral: &Vec<String>,
+    supported_liabilities: &Vec<String>,
+) -> bool {
+    for asset in lot.keys() {
+        if !supported_collateral.contains(asset) {
+            return false;
+        }
+    }
+    for asset in bid.keys() {
+        if !supported_liabilities.contains(asset) {
+            return false;
+        }
+    }
+    return true;
 }
 
 #[cfg(test)]
