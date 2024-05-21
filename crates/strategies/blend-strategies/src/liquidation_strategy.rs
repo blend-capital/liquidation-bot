@@ -406,6 +406,16 @@ impl BlendLiquidator {
                         && pending_fill.pool == pool_id
                         && pending_fill.auction_type == auction_type
                     {
+                        // if we filled store filled auction
+                        if liquidator_id == self.us_public {
+                            self.db_manager
+                                .add_auction(
+                                    &pending_fill.auction_data.clone(),
+                                    event.ledger,
+                                    fill_percentage,
+                                )
+                                .unwrap();
+                        }
                         if fill_percentage == 100 {
                             self.pending_fill.remove(index);
                         } else {
