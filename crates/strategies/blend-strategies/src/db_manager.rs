@@ -80,8 +80,8 @@ impl DbManager {
             fill_block integer not null,
             lot_assets string not null,
             lot_amounts string not null,
-            bid_assets string not null
-            bid_amounts string not null
+            bid_assets string not null,
+            bid_amounts string not null,
             percent_filled integer not null
          )",
             [],
@@ -280,22 +280,21 @@ impl DbManager {
             .map(|value| value.to_string())
             .collect::<Vec<String>>()
             .join(",");
-
         match db.execute(
-            "INSERT INTO filled_auctions (block,lot_assets,lot_amounts,bid_assets,bid_amounts,percent_filled) VALUES (?1,?2,?3,?4,?5,?6)",
-            [
-                fill_block.to_string(),
+            "INSERT INTO filled_auctions (fill_block,lot_assets,lot_amounts,bid_assets,bid_amounts,percent_filled) VALUES (?1,?2,?3,?4,?5,?6)",
+            params![
+                fill_block as u32,
                 lot_assets,
                 lot_values,
                 bid_assets,
                 bid_values,
-                percent_filled.to_string(),
+                percent_filled as u64,
             ],
         ) {
             Ok(_) => {
                 info!("Stored new fill on block: {}", fill_block.clone());
             }
-            Err(_) => {}
+            Err(e) => {info!("Error storing new fill: {}", e);}
         }
         db.close().unwrap();
         Ok(())
