@@ -480,7 +480,11 @@ impl BlendLiquidator {
 
                     _ => panic!("Invalid auction type"),
                 };
-                if pending.target_block <= event.number && profit > self.required_profit {
+                if pending.target_block <= event.number
+                    && pending.block_filled < event.number
+                    && profit > self.required_profit
+                {
+                    pending.block_filled = event.number + 2;
                     let op_builder = BlendTxBuilder {
                         contract_id: pending.pool.clone(),
                         signing_key: self.us.clone(),

@@ -20,6 +20,7 @@ pub struct OngoingAuction {
     pub auction_type: u32,
     pub min_profit: i128,
     pub db_manager: DbManager,
+    pub block_filled: u32,
 }
 
 impl OngoingAuction {
@@ -41,6 +42,7 @@ impl OngoingAuction {
             auction_type,
             min_profit,
             db_manager,
+            block_filled: 0,
         }
     }
     pub fn calc_liquidation_fill(
@@ -131,8 +133,7 @@ impl OngoingAuction {
                     SCALAR_7,
                 )
                 .unwrap();
-            let ratio = 
-                bid_val_in_raw
+            let ratio = bid_val_in_raw
                 .fixed_div_floor(wallet_balance.clone(), SCALAR_7)
                 .unwrap_or(0);
             if ratio > worst_ratio {
