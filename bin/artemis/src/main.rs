@@ -39,7 +39,8 @@ async fn main() -> Result<()> {
         .with_target("artemis_core", Level::INFO)
         .with_target("blend_strategies::auctioneer_strategy", Level::INFO)
         .with_target("blend_strategies::liquidation_strategy", Level::INFO)
-        .with_target("blend_strategies::db_manager", Level::INFO);
+        .with_target("blend_strategies::db_manager", Level::INFO)
+        .with_target("blend_strategies::helper", Level::INFO);
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
@@ -81,8 +82,14 @@ async fn main() -> Result<()> {
     engine.add_strategy(Box::new(strategy));
 
     // Set up soroban executor.
-    let executor =
-        Box::new(SorobanExecutor::new(&config.rpc_url, &config.network_passphrase.clone(), &config.db_path).await);
+    let executor = Box::new(
+        SorobanExecutor::new(
+            &config.rpc_url,
+            &config.network_passphrase.clone(),
+            &config.db_path,
+        )
+        .await,
+    );
     let executor = ExecutorMap::new(executor, |action| match action {
         Action::SubmitTx(tx) => Some(tx),
     });

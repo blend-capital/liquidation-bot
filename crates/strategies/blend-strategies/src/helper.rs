@@ -410,7 +410,10 @@ pub async fn bstop_token_to_usdc(
         },
         signatures: VecM::default(),
     });
-    let sim_result = rpc.simulate_transaction(&transaction).await;
+    let sim_result: std::result::Result<
+        stellar_rpc_client::SimulateTransactionResponse,
+        stellar_rpc_client::Error,
+    > = rpc.simulate_transaction_envelope(&transaction).await;
     let usdc_out = match sim_result {
         Ok(sim_result) => {
             let contract_function_result =
@@ -458,7 +461,7 @@ pub async fn get_balance(rpc: &Client, user: String, asset: String) -> Result<i1
         },
         signatures: VecM::default(),
     });
-    let sim_result = rpc.simulate_transaction(&transaction).await?;
+    let sim_result = rpc.simulate_transaction_envelope(&transaction).await?;
 
     let contract_function_result =
         ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
@@ -501,7 +504,7 @@ pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: String) -> Resu
         },
         signatures: VecM::default(),
     });
-    let sim_result = rpc.simulate_transaction(&transaction).await?;
+    let sim_result = rpc.simulate_transaction_envelope(&transaction).await?;
     let contract_function_result =
         ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
     match &contract_function_result {
@@ -549,7 +552,11 @@ pub async fn get_asset_prices_db(
             },
             signatures: VecM::default(),
         });
-        let sim_result = rpc.simulate_transaction(&transaction).await?;
+        let sim_result = rpc.simulate_transaction_envelope(&transaction).await?;
+        if sim_result.results.is_empty() {
+            error!("Error: failed to get price for asset {}", asset);
+            continue;
+        }
         let contract_function_result =
             ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
         let mut price: i128 = 0;

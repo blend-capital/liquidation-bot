@@ -11,9 +11,8 @@ default-members = ["bin/artemis", "bin/cli"]
 
 [workspace.dependencies]
 ## stellar
-stellar-xdr = { version = "20.1.0", default-features = true, features = [] }
-stellar-rpc-client = "20.3.5"
-soroban-cli = {version = "20.3.1"}
+stellar-xdr = { version = "21.1.0", default-features = true, features = [] }
+stellar-rpc-client = "21.2.0"
 soroban-fixed-point-math = {version = "1.0.0"}
 
 [profile.release]

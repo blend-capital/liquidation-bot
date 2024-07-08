@@ -1,11 +1,15 @@
 use crate::types::Executor;
 use anyhow::Result;
 use async_trait::async_trait;
+use ed25519_dalek::ed25519::signature::Signer;
 use ed25519_dalek::SigningKey;
+use std::{fs::OpenOptions, io::Write, path::Path, thread::sleep, time::Duration};
 use stellar_rpc_client::Client;
-use std::{ fs::OpenOptions, io::Write, path::Path, thread::sleep, time::Duration};
 use stellar_strkey::{ed25519::PublicKey as Ed25519PublicKey, Strkey};
-use stellar_xdr::curr::{Memo, Operation, Preconditions, Transaction, Uint256};
+use stellar_xdr::curr::{
+    DecoratedSignature, Memo, Operation, Preconditions, Signature, SignatureHint, Transaction,
+    TransactionEnvelope, TransactionV1Envelope, Uint256,
+};
 use tracing::{error, info};
 
 /// An executor that sends transactions to the mempool.
@@ -77,7 +81,12 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
     }
 }
 
-async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx, log_path: &str) -> Result<()> {
+async fn submit(
+    rpc: &Client,
+    network_passphrase: &str,
+    action: &SubmitStellarTx,
+    log_path: &str,
+) -> Result<()> {
     let mut seq_num = rpc
         .get_account(
             &Strkey::PublicKeyEd25519(Ed25519PublicKey(
@@ -106,16 +115,22 @@ async fn submit(rpc: &Client, network_passphrase: &str, action: &SubmitStellarTx
         operations: vec![action.op.clone()].try_into()?,
         ext: stellar_xdr::curr::TransactionExt::V0,
     };
-    let res = rpc
-        .prepare_and_send_transaction(
-            &tx,
-            &action.signing_key.clone(),
-            &[action.signing_key.clone()],
-            network_passphrase,
-            None,
-            None,
-        )
-        .await?;
+    let assembled_tx = rpc.simulate_and_assemble_transaction(&tx.clone()).await?;
+    let tx_hash = assembled_tx.hash(network_passphrase);
+    if tx_hash.is_err() {
+        return Err(anyhow::anyhow!("Failed to hash tx"));
+    }
+    let tx_signature = action.signing_key.sign(&tx_hash.unwrap());
+    let decorated_signature = DecoratedSignature {
+        hint: SignatureHint(action.signing_key.verifying_key().to_bytes()[28..].try_into()?),
+        signature: Signature(tx_signature.to_bytes().try_into()?),
+    };
+    let signed_tx_envelope = TransactionEnvelope::Tx(TransactionV1Envelope {
+        tx: assembled_tx.transaction().clone(),
+        signatures: [decorated_signature].try_into()?,
+    });
+
+    let res = rpc.send_transaction_polling(&signed_tx_envelope).await?;
     info!("Submitted tx: {:?}\n", action.op.body.clone());
     info!("Soroban response: {:?}", res.status);
     let log_msg = format!(
