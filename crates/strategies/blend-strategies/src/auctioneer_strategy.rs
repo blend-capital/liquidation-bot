@@ -57,6 +57,8 @@ impl BlendAuctioneer {
     pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
 
+
+
         Ok(Self {
             rpc: client,
             db_manager: DbManager::new(config.db_path.clone()),

@@ -343,6 +343,7 @@ impl BlendLiquidator {
                         &self.supported_collateral,
                         &self.supported_liabilities,
                     )
+
                 {
                     //update our positions
                     self.get_our_position(pool_id.clone()).await.unwrap();
