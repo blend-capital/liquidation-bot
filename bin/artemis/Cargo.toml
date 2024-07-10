@@ -11,7 +11,6 @@ blend-strategies = { path = "../../crates/strategies/blend-strategies" }
 
 stellar-xdr = {workspace = true}
 stellar-rpc-client = {workspace = true}
-soroban-cli = {workspace = true}
 stellar-strkey = "0.0.7"
 ed25519-dalek = "=2.0.0"
 

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::types::ReserveConfig;
+use crate::types::{AuctionData, ReserveConfig};
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use tracing::{error, info};
@@ -10,6 +10,7 @@ pub struct DbManager {
     pub db_directory: String,
     pub blend_asset_path: PathBuf,
     pub blend_users_path: PathBuf,
+    pub filled_auctions_path: PathBuf,
 }
 
 impl DbManager {
@@ -18,6 +19,7 @@ impl DbManager {
             db_directory: db_path.clone(),
             blend_asset_path: Path::new(&db_path).join("blend_assets.db").to_path_buf(),
             blend_users_path: Path::new(&db_path).join("blend_users.db").to_path_buf(),
+            filled_auctions_path: Path::new(&db_path).join("filled_auctions.db").to_path_buf(),
         }
     }
 
@@ -66,6 +68,21 @@ impl DbManager {
             "create table if not exists users (
             id integer primary key,
             address string not null unique
+         )",
+            [],
+        )?;
+        db.close().unwrap();
+        let db = Connection::open(&self.filled_auctions_path).unwrap();
+
+        db.execute(
+            "create table if not exists filled_auctions (
+            id integer primary key,
+            fill_block integer not null,
+            lot_assets string not null,
+            lot_amounts string not null,
+            bid_assets string not null,
+            bid_amounts string not null,
+            percent_filled integer not null
          )",
             [],
         )?;
@@ -228,6 +245,56 @@ impl DbManager {
                 info!("Found new user: {}", user_id.clone());
             }
             Err(_) => {}
+        }
+        db.close().unwrap();
+        Ok(())
+    }
+    pub fn add_auction(
+        &self,
+        auction_data: &AuctionData,
+        fill_block: u32,
+        percent_filled: i128,
+    ) -> Result<()> {
+        let db = Connection::open(Path::new(&self.filled_auctions_path))?;
+        let lot_assets = auction_data
+            .lot
+            .keys()
+            .map(|key| key.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        let lot_values = auction_data
+            .lot
+            .values()
+            .map(|value| value.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        let bid_assets = auction_data
+            .bid
+            .keys()
+            .map(|key| key.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        let bid_values = auction_data
+            .bid
+            .values()
+            .map(|value| value.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        match db.execute(
+            "INSERT INTO filled_auctions (fill_block,lot_assets,lot_amounts,bid_assets,bid_amounts,percent_filled) VALUES (?1,?2,?3,?4,?5,?6)",
+            params![
+                fill_block as u32,
+                lot_assets,
+                lot_values,
+                bid_assets,
+                bid_values,
+                percent_filled as u64,
+            ],
+        ) {
+            Ok(_) => {
+                info!("Stored new fill on block: {}", fill_block.clone());
+            }
+            Err(e) => {info!("Error storing new fill: {}", e);}
         }
         db.close().unwrap();
         Ok(())

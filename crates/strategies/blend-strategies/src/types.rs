@@ -24,6 +24,7 @@ pub struct Config {
     pub rpc_url: String,
     pub network_passphrase: String,
     pub db_path: String,
+    pub slack_api_key: String,
     pub pools: Vec<String>,
     pub supported_collateral: Vec<String>,
     pub supported_liabilities: Vec<String>,

@@ -2,6 +2,7 @@
   "rpc_url": "rpc url",
   "network_passphrase": "Test SDF Network ; September 2015",
   "db_path": "The path to where you want to store the database files",
+  "slack_api_key": "Optional Slack API Key for notifications",
   "pools": ["Pool Address 1", "Pool Address 2"],
   "supported_collateral": ["Collateral Address 1", "Collateral Address 2"],
   "supported_liabilities": ["Liability Address 1", "Liability Address 2"],

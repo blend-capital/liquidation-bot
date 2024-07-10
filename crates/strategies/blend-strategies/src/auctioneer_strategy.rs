@@ -9,15 +9,16 @@ use crate::{
     db_manager::DbManager,
     error_logger::log_error,
     helper::{
-        decode_scaddress_to_string, evaluate_user, get_asset_prices_db, get_reserve_list, load_reserve_configs, update_rate, user_positions_from_ledger_entry
+        decode_scaddress_to_string, evaluate_user, get_asset_prices_db, get_reserve_list,
+        load_reserve_configs, update_rate, user_positions_from_ledger_entry,
     },
     transaction_builder::BlendTxBuilder,
     types::{Action, Config, Event, UserPositions},
 };
 use async_trait::async_trait;
 use ed25519_dalek::SigningKey;
-use stellar_rpc_client::{Client, Event as SorobanEvent};
 use std::{collections::HashMap, str::FromStr, thread::sleep, time::Duration, vec};
+use stellar_rpc_client::{Client, Event as SorobanEvent};
 use stellar_xdr::curr::{
     AccountId, LedgerEntryData, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress,
     ScMap, ScMapEntry, ScSpecTypeDef, ScSymbol, ScVal, ScVec, StringM, Uint256, VecM,
@@ -29,8 +30,10 @@ pub struct BlendAuctioneer {
     rpc: Client,
     /// The path to the database directory
     db_manager: DbManager,
-    /// Assets in pools
-    assets: Vec<String>,
+    /// The supported collateral assets
+    supported_collateral: Vec<String>,
+    /// The supported liability assets
+    supported_liabilities: Vec<String>,
     /// Vec of Blend pool addresses to create auctions for
     pools: Vec<String>,
     /// Map pool users and their positions
@@ -53,14 +56,12 @@ pub struct BlendAuctioneer {
 impl BlendAuctioneer {
     pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
-        let db_manager = DbManager::new(config.db_path.clone());
-        let assets = [config.supported_collateral.clone(), config.supported_liabilities.clone()].concat();
-        db_manager.initialize(&assets)?;
 
         Ok(Self {
             rpc: client,
             db_manager: DbManager::new(config.db_path.clone()),
-            assets,
+            supported_collateral: config.supported_collateral.clone(),
+            supported_liabilities: config.supported_liabilities.clone(),
             pools: config.pools.clone(),
             users: HashMap::new(),
             us: signing_key.clone(),
@@ -78,18 +79,22 @@ impl BlendAuctioneer {
 #[async_trait]
 impl Strategy<Event, Action> for BlendAuctioneer {
     async fn sync_state(&mut self) -> Result<()> {
-        get_asset_prices_db(
-            &self.rpc,
-            &self.oracle_id,
-            &self.oracle_decimals,
-            &self.assets,
-            &self.db_manager,
-        )
-        .await?;
         for pool in &self.pools {
-            let assets =  get_reserve_list(&self.rpc, pool).await?;
-            load_reserve_configs(&self.rpc, pool, &assets, &self.db_manager).await.unwrap();
+            let assets = get_reserve_list(&self.rpc, pool).await?;
+            self.db_manager.initialize(&assets)?;
+            get_asset_prices_db(
+                &self.rpc,
+                &self.oracle_id,
+                &self.oracle_decimals,
+                &assets,
+                &self.db_manager,
+            )
+            .await?;
+            load_reserve_configs(&self.rpc, pool, &assets, &self.db_manager)
+                .await
+                .unwrap();
         }
+
         let users = self.db_manager.get_users()?;
         for user in users {
             for pool in self.pools.clone() {
@@ -365,13 +370,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -419,13 +419,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -489,13 +484,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -559,13 +549,8 @@ impl BlendAuctioneer {
                             .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -626,16 +611,11 @@ impl BlendAuctioneer {
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, false)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -696,16 +676,11 @@ impl BlendAuctioneer {
                 match new_rate {
                     Ok(rate) => {
                         self.db_manager
-                            .update_reserve_config_rate(&pool_id, &asset_id, rate, true)?;
+                            .update_reserve_config_rate(&pool_id, &asset_id, rate, false)?;
                     }
                     Err(_) => {
-                        load_reserve_configs(
-                            &self.rpc,
-                            &pool_id,
-                            &vec![asset_id],
-                            &self.db_manager,
-                        )
-                        .await?
+                        load_reserve_configs(&self.rpc, &pool_id, &vec![asset_id], &self.db_manager)
+                            .await?
                     }
                 }
             }
@@ -725,19 +700,27 @@ impl BlendAuctioneer {
         if event.number % 100 == 0 {
             info!("on block: {} ", event.number);
         }
+        let mut assets = self.supported_collateral.clone();
+        assets.extend(self.supported_liabilities.clone());
         if event.number % 10 == 0 {
             get_asset_prices_db(
                 &self.rpc,
                 &self.oracle_id,
                 &self.oracle_decimals,
-                &self.assets,
+                &assets,
                 &self.db_manager,
             )
             .await?;
             for pool in self.pools.iter() {
                 for users in self.users.get(pool).iter_mut() {
                     for user in users.iter() {
-                        match evaluate_user(pool, user.1, &self.db_manager) {
+                        match evaluate_user(
+                            pool,
+                            user.1,
+                            &self.supported_collateral,
+                            &self.supported_liabilities,
+                            &self.db_manager,
+                        ) {
                             Ok(score) => {
                                 // create liquidation auction if needed
                                 let action = self.act_on_score(&user.0, &pool, score);
@@ -795,8 +778,14 @@ impl BlendAuctioneer {
                         let user_position =
                             user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager)?;
 
-                        let score =
-                            evaluate_user(&pool_id, &user_position, &self.db_manager).unwrap();
+                        let score = evaluate_user(
+                            &pool_id,
+                            &user_position,
+                            &self.supported_collateral,
+                            &self.supported_liabilities,
+                            &self.db_manager,
+                        )
+                        .unwrap();
                         if score != 1 {
                             self.users
                                 .entry(pool_id.clone())
@@ -910,7 +899,14 @@ impl BlendAuctioneer {
 
             // user's borrowing power is going up so we should potentially drop them
             if (collateral && amount > 0) || (!collateral && amount < 0) {
-                let score = evaluate_user(&pool_id, &positions, &self.db_manager).unwrap();
+                let score = evaluate_user(
+                    &pool_id,
+                    &positions,
+                    &self.supported_collateral,
+                    &self.supported_liabilities,
+                    &self.db_manager,
+                )
+                .unwrap();
                 if score == 1 {
                     pool.remove(&user_id.to_string());
                 }
