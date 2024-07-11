@@ -18,7 +18,7 @@ pub struct SorobanExecutor {
     network_passphrase: String,
     rpc: Client,
     log_path: String,
-    slack_api_key: String,
+    slack_api_url_key: String,
 }
 
 /// Information about the gas bid for a transaction.
@@ -43,13 +43,13 @@ impl SorobanExecutor {
         rpc_url: &str,
         network_passphrase: &str,
         log_path: &str,
-        slack_api_key: &str,
+        slack_api_url_key: &str,
     ) -> Self {
         Self {
             rpc: Client::new(rpc_url).unwrap(),
             network_passphrase: network_passphrase.to_string(),
             log_path: log_path.to_string(),
-            slack_api_key: slack_api_key.to_string(),
+            slack_api_url_key: slack_api_url_key.to_string(),
         }
     }
 }
@@ -65,7 +65,7 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
                 &self.network_passphrase,
                 &action,
                 &self.log_path,
-                &self.slack_api_key,
+                &self.slack_api_url_key,
             )
             .await;
             match result {
@@ -81,7 +81,7 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
                             action.op, action.gas_bid_info, e
                         );
 
-                        if !self.slack_api_key.is_empty() {
+                        if !self.slack_api_url_key.is_empty() {
                             let client: reqwest::Client = reqwest::Client::new();
                             let slack_msg = serde_json::json!({
                             "text": format!("<!channel> - Failed to submit tx: {:?} Tx Error: {:?}",
@@ -95,10 +95,7 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
                             })
                             .to_string();
                             client
-                                .post(format!(
-                                    "https://hooks.slack.com/services/{}",
-                                    self.slack_api_key
-                                ))
+                                .post(self.slack_api_url_key.clone())
                                 .body(slack_msg)
                                 .send()
                                 .await?;
@@ -124,7 +121,7 @@ async fn submit(
     network_passphrase: &str,
     action: &SubmitStellarTx,
     log_path: &str,
-    slack_api_key: &str,
+    slack_api_url_key: &str,
 ) -> Result<()> {
     let mut seq_num = rpc
         .get_account(
@@ -182,7 +179,7 @@ async fn submit(
         res.status,
         res.envelope
     );
-    if !slack_api_key.is_empty() {
+    if !slack_api_url_key.is_empty() {
         let client = reqwest::Client::new();
         let slack_msg = serde_json::json!({
             "text": format!("<!channel> - Submitted tx: {:?} Tx Status: {:?}",
@@ -197,10 +194,7 @@ async fn submit(
         .to_string();
 
         client
-            .post(format!(
-                "https://hooks.slack.com/services/{}",
-                slack_api_key
-            ))
+            .post(slack_api_url_key)
             .body(slack_msg)
             .send()
             .await?;

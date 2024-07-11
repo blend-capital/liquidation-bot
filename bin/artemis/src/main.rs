@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
             &config.rpc_url,
             &config.network_passphrase.clone(),
             &config.db_path,
-            &config.slack_api_key,
+            &config.slack_api_url_key,
         )
         .await,
     );

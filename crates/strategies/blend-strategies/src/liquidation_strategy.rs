@@ -38,7 +38,7 @@ pub struct BlendLiquidator {
     /// The path to the db directory
     db_manager: DbManager,
     /// The slack api key
-    slack_api_key: String,
+    slack_api_url_key: String,
     /// The supported collateral assets
     supported_collateral: Vec<String>,
     /// The supported liability assets
@@ -81,7 +81,7 @@ impl BlendLiquidator {
         Ok(Self {
             rpc: client,
             db_manager,
-            slack_api_key: config.slack_api_key.clone(),
+            slack_api_url_key: config.slack_api_url_key.clone(),
             supported_collateral: config.supported_collateral.clone(),
             supported_liabilities: config.supported_liabilities.clone(),
             pools: config.pools.clone(),
@@ -233,7 +233,7 @@ impl BlendLiquidator {
 
                 let auction_data = decode_auction_data(data)?;
 
-                if !self.slack_api_key.is_empty() {
+                if !self.slack_api_url_key.is_empty() {
                     let client: reqwest::Client = reqwest::Client::new();
                     let slack_msg = serde_json::json!({
                     "text": format!("<!channel> - New user liquidation auction for {:?} with lot: {:?} and bid: {:?}",
@@ -244,10 +244,7 @@ impl BlendLiquidator {
                 })
                 .to_string();
                     client
-                        .post(format!(
-                            "https://hooks.slack.com/services/{}",
-                            self.slack_api_key
-                        ))
+                        .post(self.slack_api_url_key.clone())
                         .body(slack_msg)
                         .send()
                         .await?;
@@ -301,7 +298,7 @@ impl BlendLiquidator {
                     _ => (),
                 }
                 let auction_data = decode_auction_data(data)?;
-                if !self.slack_api_key.is_empty() {
+                if !self.slack_api_url_key.is_empty() {
                     let client: reqwest::Client = reqwest::Client::new();
                     let slack_msg = serde_json::json!({
                         "text": format!("<!channel> - New {} auction with lot: {:?} and bid: {:?}",
@@ -318,10 +315,7 @@ impl BlendLiquidator {
                     })
                     .to_string();
                     client
-                        .post(format!(
-                            "https://hooks.slack.com/services/{}",
-                            self.slack_api_key
-                        ))
+                        .post(self.slack_api_url_key.clone())
                         .body(slack_msg)
                         .send()
                         .await?;
