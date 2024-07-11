@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use crate::{
     constants::SCALAR_7,
     db_manager::DbManager,
-    helper::sum_adj_asset_values,
+    helper::{sum_adj_asset_values, sum_assets_value},
     types::{AuctionData, UserPositions},
 };
 use anyhow::Result;
 use soroban_fixed_point_math::FixedPoint;
+use tracing::{error, info};
 
 #[derive(Debug, Clone)]
 pub struct OngoingAuction {
@@ -20,6 +21,7 @@ pub struct OngoingAuction {
     pub auction_type: u32,
     pub min_profit: i128,
     pub db_manager: DbManager,
+    pub block_submitted: u32,
 }
 
 impl OngoingAuction {
@@ -41,6 +43,7 @@ impl OngoingAuction {
             auction_type,
             min_profit,
             db_manager,
+            block_submitted: 0,
         }
     }
     pub fn calc_liquidation_fill(
@@ -88,12 +91,7 @@ impl OngoingAuction {
         backstop_token: String,
         bid_value: i128,
     ) -> Result<i128> {
-        let (lot_value, _) = sum_adj_asset_values(
-            self.auction_data.lot.clone(),
-            &self.pool,
-            true,
-            &self.db_manager,
-        )?;
+        let lot_value = sum_assets_value(self.auction_data.lot.clone(), &self.db_manager).unwrap();
         let num_backstop_tokens = self.auction_data.bid.get(&backstop_token).unwrap();
 
         Ok(self.set_percent_and_target(
@@ -131,8 +129,7 @@ impl OngoingAuction {
                     SCALAR_7,
                 )
                 .unwrap();
-            let ratio = 
-                bid_val_in_raw
+            let ratio = bid_val_in_raw
                 .fixed_div_floor(wallet_balance.clone(), SCALAR_7)
                 .unwrap_or(0);
             if ratio > worst_ratio {
@@ -210,6 +207,22 @@ impl OngoingAuction {
             }
             pct as u64
         };
+        match self.auction_type {
+            0 => {
+                info!("Calculating fill for user liquidation auction")
+            }
+            1 => {
+                info!("Calculating fill for bad debt auction")
+            }
+            2 => {
+                info!("Calculating fill for interest auction")
+            }
+            _ => {
+                error!("Error: auction type not recognized")
+            }
+        }
+        info!("Setting percent and target \n lot value: {lot_value} \n bid value: {bid_value} \n raw bid required: {raw_bid_required} \n bid offset: {bid_offset} \n max bid: {our_max_bid}");
+        info!("Fill_block: {:?}, profit: {:?} \n bid required: {:?} \n target block: {:?} \n pct to fill: {:?}", fill_block, profit, bid_required, self.target_block, self.pct_to_fill);
         profit
     }
 }

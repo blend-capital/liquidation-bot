@@ -5,7 +5,7 @@ use crate::{
     error_logger::log_error,
     helper::{
         bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_string, get_balance,
-        user_positions_from_ledger_entry,
+        user_positions_from_ledger_entry, validate_assets,
     },
     transaction_builder::{BlendTxBuilder, Request},
     types::{Action, Config, Event, UserPositions},
@@ -37,6 +37,8 @@ pub struct BlendLiquidator {
     rpc: Client,
     /// The path to the db directory
     db_manager: DbManager,
+    /// The slack api key
+    slack_api_url_key: String,
     /// The supported collateral assets
     supported_collateral: Vec<String>,
     /// The supported liability assets
@@ -79,6 +81,7 @@ impl BlendLiquidator {
         Ok(Self {
             rpc: client,
             db_manager,
+            slack_api_url_key: config.slack_api_url_key.clone(),
             supported_collateral: config.supported_collateral.clone(),
             supported_liabilities: config.supported_liabilities.clone(),
             pools: config.pools.clone(),
@@ -228,9 +231,30 @@ impl BlendLiquidator {
                 )?);
                 info!("New liquidation auction for user: {:?}", user.to_string());
 
-                let auction_data = decode_auction_data(data);
+                let auction_data = decode_auction_data(data)?;
 
-                if self.validate_assets(auction_data.lot.clone(), auction_data.bid.clone()) {
+                if !self.slack_api_url_key.is_empty() {
+                    let client: reqwest::Client = reqwest::Client::new();
+                    let slack_msg = serde_json::json!({
+                    "text": format!("<!channel> - New user liquidation auction for {:?} with lot: {:?} and bid: {:?}",
+                        user,
+                        auction_data.lot,
+                        auction_data.bid
+                    )
+                })
+                .to_string();
+                    client
+                        .post(self.slack_api_url_key.clone())
+                        .body(slack_msg)
+                        .send()
+                        .await?;
+                }
+                if validate_assets(
+                    &auction_data.lot,
+                    &auction_data.bid,
+                    &self.supported_collateral,
+                    &self.supported_liabilities,
+                ) {
                     //update our positions
                     self.get_our_position(pool_id.clone()).await.unwrap();
 
@@ -265,6 +289,7 @@ impl BlendLiquidator {
                 }
             }
             "new_auction" => {
+                info!("New Auction Event");
                 let mut auction_type = 0;
                 match ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap() {
                     ScVal::U32(num) => {
@@ -272,8 +297,29 @@ impl BlendLiquidator {
                     }
                     _ => (),
                 }
-                let auction_data = decode_auction_data(data);
-
+                let auction_data = decode_auction_data(data)?;
+                if !self.slack_api_url_key.is_empty() {
+                    let client: reqwest::Client = reqwest::Client::new();
+                    let slack_msg = serde_json::json!({
+                        "text": format!("<!channel> - New {} auction with lot: {:?} and bid: {:?}",
+                             if auction_type == 1 {
+                                "bad debt"
+                            } else if auction_type == 2{
+                                "interest"
+                            } else {
+                                "unknown auction type"
+                            },
+                            auction_data.lot,
+                            auction_data.bid
+                        )
+                    })
+                    .to_string();
+                    client
+                        .post(self.slack_api_url_key.clone())
+                        .body(slack_msg)
+                        .send()
+                        .await?;
+                }
                 let mut pending_fill = OngoingAuction::new(
                     pool_id.clone(),
                     self.backstop_id.clone(),
@@ -285,7 +331,13 @@ impl BlendLiquidator {
                 //Bad debt auction
                 // we only care about bid here
                 if auction_type == 1
-                    && self.validate_assets(HashMap::new(), auction_data.bid.clone())
+                    && validate_assets(
+                        &HashMap::new(),
+                        &auction_data.bid,
+                        &self.supported_collateral,
+                        &self.supported_liabilities,
+                    )
+
                 {
                     //update our positions
                     self.get_our_position(pool_id.clone()).await.unwrap();
@@ -312,7 +364,7 @@ impl BlendLiquidator {
                     info!(" New pending bad debt fill: {:?}", pending_fill.clone());
                     self.pending_fill.push(pending_fill);
                     //we only care about lot here
-                } else if self.validate_assets(auction_data.lot.clone(), HashMap::new()) {
+                } else {
                     //update our wallet
                     match get_balance(
                         &self.rpc,
@@ -480,7 +532,11 @@ impl BlendLiquidator {
 
                     _ => panic!("Invalid auction type"),
                 };
-                if pending.target_block <= event.number && profit > self.required_profit {
+                if pending.target_block <= event.number
+                    && pending.block_submitted < event.number
+                    && profit > self.required_profit
+                {
+                    pending.block_submitted = event.number + 2;
                     let op_builder = BlendTxBuilder {
                         contract_id: pending.pool.clone(),
                         signing_key: self.us.clone(),
@@ -610,10 +666,14 @@ impl BlendLiquidator {
 
                 match &value {
                     LedgerEntryData::ContractData(data) => {
-                        let auction_data = decode_auction_data(data.val.clone());
+                        let auction_data = decode_auction_data(data.val.clone())?;
                         info!("Found outstanding user liquidation auction for: {:?}", user);
-                        if self.validate_assets(auction_data.lot.clone(), auction_data.bid.clone())
-                        {
+                        if validate_assets(
+                            &auction_data.lot,
+                            &auction_data.bid,
+                            &self.supported_collateral,
+                            &self.supported_liabilities,
+                        ) {
                             let mut pending_fill = OngoingAuction::new(
                                 pool.clone(),
                                 user.clone(),
@@ -626,11 +686,6 @@ impl BlendLiquidator {
                                 self.bankroll.get(&pool).unwrap(),
                                 self.min_hf,
                             )?;
-                            info!(
-                                " New pending fill for user: {:?}, block: {:?}",
-                                user.to_string(),
-                                pending_fill.target_block.clone()
-                            );
                             self.pending_fill.push(pending_fill);
                         }
                     }
@@ -683,8 +738,14 @@ impl BlendLiquidator {
 
                 match &value {
                     LedgerEntryData::ContractData(data) => {
-                        let auction_data = decode_auction_data(data.val.clone());
-                        if self.validate_assets(HashMap::new(), auction_data.bid.clone()) {
+                        let auction_data = decode_auction_data(data.val.clone())?;
+                        if validate_assets(
+                            &HashMap::new(),
+                            &auction_data.bid,
+                            &self.supported_collateral,
+                            &self.supported_liabilities,
+                        ) {
+                            info!("Found bad debt auction for pool: {:?}", pool);
                             let mut pending_fill = OngoingAuction::new(
                                 pool.clone(),
                                 self.backstop_id.clone(),
@@ -723,7 +784,7 @@ impl BlendLiquidator {
 
     async fn get_interest_auction(&mut self, pool: String) -> Result<()> {
         let pool_id = ScAddress::from_str(&pool)?;
-        let reserve_data_key = ScVal::Vec(Some(
+        let data_key = ScVal::Vec(Some(
             ScVec::try_from(vec![
                 ScVal::Symbol(ScSymbol::from(ScSymbol::from(
                     StringM::from_str("Auction").unwrap(),
@@ -745,15 +806,15 @@ impl BlendLiquidator {
             ])
             .unwrap(),
         ));
-        let position_ledger_key =
+        let auction_ledger_key =
             stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
                 contract: pool_id.clone(),
-                key: reserve_data_key,
+                key: data_key,
                 durability: stellar_xdr::curr::ContractDataDurability::Temporary,
             });
         let result = self
             .rpc
-            .get_ledger_entries(&vec![position_ledger_key])
+            .get_ledger_entries(&vec![auction_ledger_key])
             .await?;
         if let Some(entries) = result.entries {
             for entry in entries {
@@ -762,39 +823,38 @@ impl BlendLiquidator {
 
                 match &value {
                     LedgerEntryData::ContractData(data) => {
-                        let auction_data = decode_auction_data(data.val.clone());
-                        if self.validate_assets(auction_data.lot.clone(), HashMap::new()) {
-                            let mut pending_fill = OngoingAuction::new(
-                                pool.clone(),
-                                self.backstop_id.clone(),
-                                auction_data.clone(),
-                                2,
-                                self.required_profit,
-                                self.db_manager.clone(),
-                            );
-                            let bid_value = bstop_token_to_usdc(
-                                &self.rpc,
-                                self.backstop_token_address.clone(),
-                                self.backstop_id.clone(),
-                                *pending_fill
-                                    .auction_data
-                                    .bid
-                                    .get(&self.backstop_token_address)
-                                    .unwrap(),
-                                self.usdc_address.clone(),
-                            )
-                            .await
-                            .unwrap();
-                            pending_fill.calc_interest_fill(
-                                self.wallet
-                                    .get(&self.backstop_token_address)
-                                    .unwrap()
-                                    .clone(),
-                                self.backstop_token_address.clone(),
-                                bid_value,
-                            )?;
-                            self.pending_fill.push(pending_fill);
-                        }
+                        let auction_data = decode_auction_data(data.val.clone())?;
+                        info!("Found interest auction for pool: {:?}", pool);
+                        let mut pending_fill = OngoingAuction::new(
+                            pool.clone(),
+                            self.backstop_id.clone(),
+                            auction_data.clone(),
+                            2,
+                            self.required_profit,
+                            self.db_manager.clone(),
+                        );
+                        let bid_value = bstop_token_to_usdc(
+                            &self.rpc,
+                            self.backstop_token_address.clone(),
+                            self.backstop_id.clone(),
+                            *pending_fill
+                                .auction_data
+                                .bid
+                                .get(&self.backstop_token_address)
+                                .unwrap(),
+                            self.usdc_address.clone(),
+                        )
+                        .await
+                        .unwrap();
+                        pending_fill.calc_interest_fill(
+                            self.wallet
+                                .get(&self.backstop_token_address)
+                                .unwrap()
+                                .clone(),
+                            self.backstop_token_address.clone(),
+                            bid_value,
+                        )?;
+                        self.pending_fill.push(pending_fill);
                     }
                     _ => (),
                 }
@@ -802,20 +862,5 @@ impl BlendLiquidator {
         }
 
         Ok(())
-    }
-
-    // validates assets in two hashmaps of assets and amounts - common pattern
-    fn validate_assets(&self, lot: HashMap<String, i128>, bid: HashMap<String, i128>) -> bool {
-        for asset in lot.keys() {
-            if !self.supported_collateral.contains(asset) {
-                return false;
-            }
-        }
-        for asset in bid.keys() {
-            if !self.supported_liabilities.contains(asset) {
-                return false;
-            }
-        }
-        return true;
     }
 }

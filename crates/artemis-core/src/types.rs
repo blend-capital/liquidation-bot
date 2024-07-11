@@ -90,3 +90,7 @@ where
         }
     }
 }
+
+pub struct SlackRequestBody {
+    pub text: String,
+}

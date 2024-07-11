@@ -18,8 +18,13 @@ use ed25519_dalek::SigningKey;
 use stellar_rpc_client::EventType;
 use stellar_strkey::ed25519::PrivateKey;
 
+use core::panic;
 use serde_json;
-use std::fs;
+use std::{
+    fs::{self, OpenOptions},
+    path::Path,
+    sync::Arc,
+};
 use tracing::{info, Level};
 use tracing_subscriber::{filter, prelude::*};
 /// CLI Options.
@@ -34,21 +39,32 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+    let config_data = fs::read_to_string(args.config_path).expect("Unable to read config file");
+    let config: Config = serde_json::from_str(&config_data).expect("Unable to parse json");
+
     // Set up tracing and parse args.
     let filter = filter::Targets::new()
         .with_target("artemis_core", Level::INFO)
         .with_target("blend_strategies::auctioneer_strategy", Level::INFO)
         .with_target("blend_strategies::liquidation_strategy", Level::INFO)
-        .with_target("blend_strategies::db_manager", Level::INFO);
+        .with_target("blend_strategies::auction_manager", Level::INFO)
+        .with_target("blend_strategies::db_manager", Level::INFO)
+        .with_target("blend_strategies::helper", Level::INFO);
 
+    let log_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(Path::new(&config.db_path).join("logs.txt"));
+    let log_file = match log_file {
+        Ok(file) => file,
+        Err(err) => panic!("Error: {:?}", err),
+    };
+    let log = tracing_subscriber::fmt::layer().with_writer(Arc::new(log_file));
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
-        .with(filter)
+        .with(filter.and_then(log))
         .init();
-
-    let args = Args::parse();
-    let config_data = fs::read_to_string(args.config_path).expect("Unable to read config file");
-    let config: Config = serde_json::from_str(&config_data).expect("Unable to parse json");
 
     let signing_key =
         SigningKey::from_bytes(&PrivateKey::from_string(&args.private_key).unwrap().0);
@@ -81,8 +97,15 @@ async fn main() -> Result<()> {
     engine.add_strategy(Box::new(strategy));
 
     // Set up soroban executor.
-    let executor =
-        Box::new(SorobanExecutor::new(&config.rpc_url, &config.network_passphrase.clone(), &config.db_path).await);
+    let executor = Box::new(
+        SorobanExecutor::new(
+            &config.rpc_url,
+            &config.network_passphrase.clone(),
+            &config.db_path,
+            &config.slack_api_url_key,
+        )
+        .await,
+    );
     let executor = ExecutorMap::new(executor, |action| match action {
         Action::SubmitTx(tx) => Some(tx),
     });

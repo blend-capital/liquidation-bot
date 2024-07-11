@@ -10,8 +10,8 @@ use crate::{
 use anyhow::{Error, Result};
 use ed25519_dalek::SigningKey;
 use soroban_fixed_point_math::FixedPoint;
-use stellar_rpc_client::Client;
 use soroban_spec_tools::from_string_primitive;
+use stellar_rpc_client::Client;
 use stellar_xdr::curr::{
     InvokeContractArgs, InvokeHostFunctionOp, LedgerEntryData, LedgerKey, LedgerKeyContractData,
     Limits, Memo, MuxedAccount, Operation, Preconditions, ReadXdr, ScAddress, ScSpecTypeDef,
@@ -85,7 +85,7 @@ pub fn decode_i128_to_native(scval: &ScVal) -> i128 {
     }
 }
 
-pub fn decode_auction_data(auction_data: ScVal) -> AuctionData {
+pub fn decode_auction_data(auction_data: ScVal) -> Result<AuctionData> {
     let mut bid: HashMap<String, i128> = HashMap::new();
     let mut lot: HashMap<String, i128> = HashMap::new();
     let mut block = 0;
@@ -114,7 +114,10 @@ pub fn decode_auction_data(auction_data: ScVal) -> AuctionData {
         }
         _ => (),
     }
-    return AuctionData { bid, lot, block };
+    if bid.is_empty() || lot.is_empty() || block == 0 {
+        return Err(Error::msg("Error: failed to decode auction data"));
+    }
+    return Ok(AuctionData { bid, lot, block });
 }
 
 //Returns (index, collateral_factor, liability_factor,scalar)
@@ -289,6 +292,15 @@ pub fn sum_adj_asset_values(
     Ok((value, adjusted_value))
 }
 
+pub fn sum_assets_value(assets: HashMap<String, i128>, db_manager: &DbManager) -> Result<i128> {
+    let mut total_value = 0;
+    for (asset, amount) in assets.iter() {
+        let price = db_manager.get_asset_price(&asset)?;
+        total_value += amount.fixed_mul_floor(price, SCALAR_7).unwrap();
+    }
+    return Ok(total_value);
+}
+
 // Returns the raw and adjusted value of a user's position (raw,adjusted)
 fn calc_position_value(
     config: ReserveConfig,
@@ -318,8 +330,18 @@ fn calc_position_value(
 pub fn evaluate_user(
     pool: &String,
     user_positions: &UserPositions,
+    supported_collateral: &Vec<String>,
+    supported_liabilities: &Vec<String>,
     db_manager: &DbManager,
 ) -> Result<u64> {
+    if !validate_assets(
+        &user_positions.collateral,
+        &user_positions.liabilities,
+        supported_collateral,
+        supported_liabilities,
+    ) {
+        return Ok(1);
+    }
     let (collateral_value, adj_collateral_value) =
         sum_adj_asset_values(user_positions.collateral.clone(), pool, true, db_manager)?;
     let (liabilities_value, adj_liabilities_value) =
@@ -410,7 +432,10 @@ pub async fn bstop_token_to_usdc(
         },
         signatures: VecM::default(),
     });
-    let sim_result = rpc.simulate_transaction(&transaction).await;
+    let sim_result: std::result::Result<
+        stellar_rpc_client::SimulateTransactionResponse,
+        stellar_rpc_client::Error,
+    > = rpc.simulate_transaction_envelope(&transaction).await;
     let usdc_out = match sim_result {
         Ok(sim_result) => {
             let contract_function_result =
@@ -458,7 +483,7 @@ pub async fn get_balance(rpc: &Client, user: String, asset: String) -> Result<i1
         },
         signatures: VecM::default(),
     });
-    let sim_result = rpc.simulate_transaction(&transaction).await?;
+    let sim_result = rpc.simulate_transaction_envelope(&transaction).await?;
 
     let contract_function_result =
         ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
@@ -501,7 +526,7 @@ pub async fn total_comet_tokens(rpc: &Client, bstop_tkn_address: String) -> Resu
         },
         signatures: VecM::default(),
     });
-    let sim_result = rpc.simulate_transaction(&transaction).await?;
+    let sim_result = rpc.simulate_transaction_envelope(&transaction).await?;
     let contract_function_result =
         ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
     match &contract_function_result {
@@ -515,7 +540,7 @@ pub fn update_rate(numerator: i128, denominator: i128) -> Result<i128> {
         .fixed_div_floor(denominator, SCALAR_9)
         .unwrap_or(SCALAR_9 + 1);
     assert!(rate.gt(&1_000_0000));
-    if rate.gt(&1_000_0000) {
+    if rate.lt(&1_000_0000) {
         error!("Error: rate exceeds maximum value");
     }
     return Ok(rate);
@@ -549,7 +574,11 @@ pub async fn get_asset_prices_db(
             },
             signatures: VecM::default(),
         });
-        let sim_result = rpc.simulate_transaction(&transaction).await?;
+        let sim_result = rpc.simulate_transaction_envelope(&transaction).await?;
+        if sim_result.results.is_empty() {
+            error!("Error: failed to get price for asset {}", asset);
+            continue;
+        }
         let contract_function_result =
             ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
         let mut price: i128 = 0;
@@ -576,14 +605,17 @@ pub async fn get_asset_prices_db(
 
 pub async fn get_reserve_list(rpc: &Client, pool: &String) -> Result<Vec<String>> {
     let mut assets: Vec<String> = Vec::new();
-    let reserve_list_entry = rpc.get_ledger_entries(&[stellar_xdr::curr::LedgerKey::ContractData(
-        LedgerKeyContractData {
-            contract: ScAddress::from_str(&pool)?,
-            key: ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str("ResList")?))),
-            durability: stellar_xdr::curr::ContractDataDurability::Persistent,
-        },
-    )])
-    .await?;
+    let reserve_list_entry = rpc
+        .get_ledger_entries(&[stellar_xdr::curr::LedgerKey::ContractData(
+            LedgerKeyContractData {
+                contract: ScAddress::from_str(&pool)?,
+                key: ScVal::Symbol(ScSymbol::from(ScSymbol::from(StringM::from_str(
+                    "ResList",
+                )?))),
+                durability: stellar_xdr::curr::ContractDataDurability::Persistent,
+            },
+        )])
+        .await?;
     if let Some(entries) = reserve_list_entry.entries {
         if let Some(entry) = entries.get(0) {
             let value = LedgerEntryData::from_xdr_base64(entry.xdr.clone(), Limits::none())?;
@@ -690,6 +722,26 @@ pub async fn load_reserve_configs(
         }
     }
     Ok(())
+}
+
+// validates assets in two hashmaps of assets and amounts - common pattern
+pub fn validate_assets(
+    lot: &HashMap<String, i128>,
+    bid: &HashMap<String, i128>,
+    supported_collateral: &Vec<String>,
+    supported_liabilities: &Vec<String>,
+) -> bool {
+    for asset in lot.keys() {
+        if !supported_collateral.contains(asset) {
+            return false;
+        }
+    }
+    for asset in bid.keys() {
+        if !supported_liabilities.contains(asset) {
+            return false;
+        }
+    }
+    return true;
 }
 
 #[cfg(test)]
