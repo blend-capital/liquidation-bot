@@ -2,7 +2,7 @@ use crate::{
     auction_manager::OngoingAuction,
     constants::SCALAR_7,
     db_manager::DbManager,
-    error_logger::log_error,
+    file_logger::log_error,
     helper::{
         bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_string, get_balance,
         user_positions_from_ledger_entry, validate_assets,
