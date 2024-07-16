@@ -7,7 +7,7 @@ use soroban_spec_tools::from_string_primitive;
 
 use crate::{
     db_manager::DbManager,
-    error_logger::log_error,
+    file_logger::{heartbeat, log_error},
     helper::{
         decode_scaddress_to_string, evaluate_user, get_asset_prices_db, get_reserve_list,
         load_reserve_configs, update_rate, user_positions_from_ledger_entry,
@@ -698,10 +698,6 @@ impl BlendAuctioneer {
     /// Process new block events, updating the internal state.
     async fn process_new_block_event(&mut self, event: NewBlock) -> Result<Vec<Action>> {
         let mut actions = Vec::new();
-        //TEMP: check if liquidations are possible every 100 blocks since we're not getting oracle update events atm
-        if event.number % 100 == 0 {
-            info!("on block: {} ", event.number);
-        }
         let mut assets = self.supported_collateral.clone();
         assets.extend(self.supported_liabilities.clone());
         if event.number % 10 == 0 {
@@ -713,6 +709,8 @@ impl BlendAuctioneer {
                 &self.db_manager,
             )
             .await?;
+            
+            // evalaute users ever 10 blocks for potential liquidations
             for pool in self.pools.iter() {
                 for users in self.users.get(pool).iter_mut() {
                     for user in users.iter() {
@@ -740,6 +738,10 @@ impl BlendAuctioneer {
             }
         }
 
+        match heartbeat(&event.number) {
+            Ok(_) => {},
+            Err(_) => error!("Heartbeat failed {}", event.number),
+        }
         return Ok(actions);
     }
 
