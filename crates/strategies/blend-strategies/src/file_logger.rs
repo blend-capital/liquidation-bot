@@ -20,7 +20,7 @@ pub fn heartbeat(block: &u32) -> Result<(), Error> {
 
     let mut output = OpenOptions::new()
         .create(true)
-        .create(true)
+        .append(true)
         .open(file_path)?;
     writeln!(output, "{}", block)?;
     output.flush()?;
