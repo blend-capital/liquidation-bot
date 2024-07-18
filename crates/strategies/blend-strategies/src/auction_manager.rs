@@ -226,12 +226,14 @@ impl OngoingAuction {
         info!("Fill_block: {:?}, profit: {:?} \n bid required: {:?} \n target block: {:?} \n pct to fill: {:?}", fill_block, profit, bid_required, self.target_block, self.pct_to_fill);
         profit
     }
+
     pub fn build_requests(
         &self,
         wallet: &HashMap<String, i128>,
         pool_position: &UserPositions,
         supported_collateral: &Vec<String>,
         min_hf: &i128,
+        submit_block: u32,
     ) -> Result<Vec<Request>> {
         let mut new_pool_positions = pool_position.clone();
         let mut requests: Vec<Request> = vec![Request {
@@ -241,10 +243,13 @@ impl OngoingAuction {
         }];
 
         if self.auction_type == 0 || self.auction_type == 1 {
-            for (bid_asset, bid_value) in self.auction_data.bid.clone() {
+            let scaled_auction = self
+                .auction_data
+                .scale_auction(submit_block, self.pct_to_fill);
+            for (bid_asset, bid_value) in scaled_auction.bid.clone() {
                 if wallet.get(&bid_asset).is_some()
                     && wallet[&bid_asset] > 100
-                    && self.target_block - self.auction_data.block < 400
+                    && submit_block - self.auction_data.block < 400
                 {
                     let reserve = self
                         .db_manager
@@ -259,6 +264,8 @@ impl OngoingAuction {
                         .fixed_div_floor(SCALAR_9, reserve.est_d_rate)
                         .unwrap();
                     if wallet_dtoken_bal < bid_value {
+                        // wallet balance is less than new liability value so repayment will not clear position.
+                        // Add remaining liability to auctioneer positions
                         if new_pool_positions.liabilities.contains_key(&bid_asset) {
                             new_pool_positions
                                 .liabilities
@@ -289,36 +296,32 @@ impl OngoingAuction {
         )
         .unwrap()
         .1;
+        let required_effective_collateral = liquidator_effective_liabilities
+            .fixed_mul_ceil(*min_hf, SCALAR_7)
+            .unwrap();
         if self.auction_type == 0 {
             for (index, asset) in supported_collateral.iter().enumerate() {
-                if index != 0 {
-                    let reserve = self
-                        .db_manager
-                        .get_reserve_config_from_asset(&self.pool, asset)?;
-                    let b_tokens = self.auction_data.lot.get(asset);
-                    if b_tokens.is_some() {
+                // don't attempt to withdraw the first collateral asset or any asset that has an
+                // existing position
+                if index != 0 && pool_position.collateral.get(asset).unwrap_or(&0).clone() == 0 {
+                    if let Some(b_tokens) = self.auction_data.lot.get(asset) {
+                        if b_tokens.clone() == 0 {
+                            continue;
+                        }
+                        let reserve = self
+                            .db_manager
+                            .get_reserve_config_from_asset(&self.pool, asset)?;
                         if reserve.collateral_factor == 0
-                            || liquidator_effective_collateral
-                                > liquidator_effective_liabilities
-                                    .fixed_mul_ceil(*min_hf, SCALAR_7)
-                                    .unwrap()
+                            || liquidator_effective_collateral > required_effective_collateral
                         {
                             requests.push(Request {
                                 request_type: 3,
                                 address: asset.clone(),
                                 amount: i64::MAX as i128,
                             });
-                            liquidator_effective_collateral -= sum_adj_asset_values(
-                                HashMap::from([(asset.to_owned(), b_tokens.unwrap().to_owned())]),
-                                &self.pool,
-                                true,
-                                &self.db_manager,
-                            )
-                            .unwrap()
-                            .1
                         } else {
                             liquidator_effective_collateral += sum_adj_asset_values(
-                                HashMap::from([(asset.to_owned(), b_tokens.unwrap().to_owned())]),
+                                HashMap::from([(asset.clone(), b_tokens.clone())]),
                                 &self.pool,
                                 true,
                                 &self.db_manager,

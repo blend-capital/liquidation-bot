@@ -528,6 +528,7 @@ impl BlendLiquidator {
                         }),
                         &self.supported_collateral,
                         &self.min_hf,
+                        event.number + 1,
                     )?;
                     info!("{:?}", pending.auction_data);
                     info!(
