@@ -5,9 +5,9 @@ use crate::{
     file_logger::log_error,
     helper::{
         bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_string, get_balance,
-        user_positions_from_ledger_entry, validate_assets,
+        get_pool_positions, validate_assets,
     },
-    transaction_builder::{BlendTxBuilder, Request},
+    transaction_builder::BlendTxBuilder,
     types::{Action, Config, Event, UserPositions},
 };
 use anyhow::Result;
@@ -107,37 +107,8 @@ impl BlendLiquidator {
 #[async_trait]
 impl Strategy<Event, Action> for BlendLiquidator {
     async fn sync_state(&mut self) -> Result<()> {
-        // Get our wallet assets
-        for asset in self.supported_collateral.clone().iter() {
-            match get_balance(&self.rpc, self.us_public.clone(), asset.clone()).await {
-                Ok(balance) => {
-                    self.wallet.insert(asset.clone(), balance);
-                }
-                Err(_) => {
-                    self.wallet.insert(asset.clone(), 0);
-                }
-            }
-        }
-
-        match get_balance(
-            &self.rpc,
-            self.us_public.clone(),
-            self.backstop_token_address.clone(),
-        )
-        .await
-        {
-            Ok(balance) => {
-                self.wallet
-                    .insert(self.backstop_token_address.clone(), balance);
-            }
-            Err(_) => {
-                self.wallet.insert(self.backstop_token_address.clone(), 0);
-            }
-        }
+        self.sync_liquidator(None).await?;
         for pool in self.pools.clone() {
-            // Get our positions
-            self.get_our_position(pool.clone()).await?;
-
             // Get ongoing interest auctions
             self.get_interest_auction(pool.clone()).await?;
             // Get ongoing bad debt auctions
@@ -256,7 +227,7 @@ impl BlendLiquidator {
                     &self.supported_liabilities,
                 ) {
                     //update our positions
-                    self.get_our_position(pool_id.clone()).await.unwrap();
+                    self.sync_liquidator(Some(pool_id.clone())).await.unwrap();
 
                     let mut pending_fill = OngoingAuction::new(
                         pool_id.clone(),
@@ -337,10 +308,9 @@ impl BlendLiquidator {
                         &self.supported_collateral,
                         &self.supported_liabilities,
                     )
-
                 {
                     //update our positions
-                    self.get_our_position(pool_id.clone()).await.unwrap();
+                    self.sync_liquidator(Some(pool_id.clone())).await.unwrap();
 
                     pending_fill
                         .calc_bad_debt_fill(
@@ -366,22 +336,7 @@ impl BlendLiquidator {
                     //we only care about lot here
                 } else {
                     //update our wallet
-                    match get_balance(
-                        &self.rpc,
-                        self.us_public.clone(),
-                        self.backstop_token_address.clone(),
-                    )
-                    .await
-                    {
-                        Ok(balance) => {
-                            self.wallet
-                                .insert(self.backstop_token_address.clone(), balance);
-                        }
-                        Err(_) => {
-                            self.wallet.insert(self.backstop_token_address.clone(), 0);
-                        }
-                    }
-
+                    self.sync_liquidator(Some(pool_id.clone())).await?;
                     //Interest auction
                     pending_fill.calc_interest_fill(
                         self.wallet
@@ -448,18 +403,40 @@ impl BlendLiquidator {
                     "Auction filled, user: {:?}, liquidator {:?}",
                     liquidated_id, liquidator_id
                 );
-                // if we filled update our bankroll
-                if liquidator_id == self.us_public {
-                    self.get_our_position(pool_id.clone()).await?;
-                }
 
                 for (index, pending_fill) in self.pending_fill.clone().iter_mut().enumerate() {
                     if pending_fill.user == liquidated_id
                         && pending_fill.pool == pool_id
                         && pending_fill.auction_type == auction_type
                     {
-                        // if we filled store filled auction
+                        // if we filled store filled auction and update our position
                         if liquidator_id == self.us_public {
+                            self.sync_liquidator(Some(pool_id.clone())).await?;
+                            let pool_positions = self.bankroll.get(&pool_id).unwrap();
+                            if pool_positions.liabilities.len() > 0
+                                || pool_positions.collateral.len() > 1
+                            {
+                                let alert_msg = format!("Liquidator {:?} has failed to clear positions. Liabilities: {:?}, Collateral: {:?}", 
+                                    self.us_public,
+                                    pool_positions.liabilities,
+                                    pool_positions.collateral
+                                );
+                                let slack_msg = serde_json::json!({
+                                    "text": format!("<!channel> - {}",
+                                    alert_msg.clone()
+                                    )
+                                })
+                                .to_string();
+                                if !self.slack_api_url_key.is_empty() {
+                                    let client: reqwest::Client = reqwest::Client::new();
+                                    client
+                                        .post(self.slack_api_url_key.clone())
+                                        .body(slack_msg.clone())
+                                        .send()
+                                        .await?;
+                                }
+                                info!("{}", alert_msg.clone());
+                            }
                             self.db_manager
                                 .add_auction(
                                     &pending_fill.auction_data.clone(),
@@ -486,9 +463,11 @@ impl BlendLiquidator {
     async fn process_new_block_event(&mut self, event: NewBlock) -> Result<Vec<Action>> {
         let mut actions = vec![];
         let liquidator_id = self.us_public.clone();
-        for pending in self.pending_fill.iter_mut() {
+        let mut pending_fills = self.pending_fill.clone();
+        for pending in pending_fills.iter_mut() {
             // assess pending if we're within 50 blocks
             if pending.target_block as i128 - event.number as i128 <= 50 {
+                self.sync_liquidator(Some(pending.pool.clone())).await?;
                 let profit = match pending.auction_type {
                     0 => pending.calc_liquidation_fill(
                         &self.bankroll.get(&pending.pool).unwrap(),
@@ -541,31 +520,21 @@ impl BlendLiquidator {
                         contract_id: pending.pool.clone(),
                         signing_key: self.us.clone(),
                     };
-                    let mut requests: Vec<Request> = vec![Request {
-                        request_type: 6 + pending.auction_type,
-                        address: pending.user.clone(),
-                        amount: pending.pct_to_fill as i128,
-                    }];
-
-                    if pending.auction_type == 1 {
-                        requests.append(
-                            &mut pending
-                                .auction_data
-                                .bid
-                                .clone()
-                                .iter()
-                                .map(|(k, v)| Request {
-                                    request_type: 5,
-                                    address: k.clone(),
-                                    amount: v
-                                        .fixed_mul_floor(pending.pct_to_fill as i128, 100)
-                                        .unwrap()
-                                        + 10,
-                                })
-                                .collect(),
-                        )
-                    }
-
+                    let requests = pending.build_requests(
+                        &self.wallet,
+                        &self.bankroll.get(&pending.pool).unwrap_or(&UserPositions {
+                            collateral: HashMap::new(),
+                            liabilities: HashMap::new(),
+                        }),
+                        &self.supported_collateral,
+                        &self.min_hf,
+                    )?;
+                    info!("{:?}", pending.auction_data);
+                    info!(
+                        "Sending auction fill to executor for user: {:?} with requests: {:?}",
+                        pending.user.clone(),
+                        requests
+                    );
                     let op =
                         op_builder.submit(&liquidator_id, &liquidator_id, &liquidator_id, requests);
                     actions.push(Action::SubmitTx(SubmitStellarTx {
@@ -589,43 +558,61 @@ impl BlendLiquidator {
                 }
             }
         }
-
+        self.pending_fill = pending_fills;
         return Ok(actions);
     }
 
-    async fn get_our_position(&mut self, pool_id: String) -> Result<()> {
-        let reserve_data_key = ScVal::Vec(Some(
-            ScVec::try_from(vec![
-                ScVal::Symbol(ScSymbol::from(ScSymbol::from(
-                    StringM::from_str("Positions").unwrap(),
-                ))),
-                ScVal::Address(ScAddress::from_str(&self.us_public)?),
-            ])
-            .unwrap(),
-        ));
-        let position_ledger_key =
-            stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
-                contract: ScAddress::from_str(&pool_id)?,
-                key: reserve_data_key,
-                durability: stellar_xdr::curr::ContractDataDurability::Persistent,
-            });
-        let result = self
-            .rpc
-            .get_ledger_entries(&vec![position_ledger_key])
-            .await?;
-        if let Some(entries) = result.entries {
-            for entry in entries {
-                let value: LedgerEntryData =
-                    LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
-
-                match &value {
-                    LedgerEntryData::ContractData(_) => {
-                        let user_position =
-                            user_positions_from_ledger_entry(&value, &pool_id, &self.db_manager)?;
-
-                        self.bankroll.insert(pool_id.clone(), user_position.clone());
+    /// Sync the liquidator state with the chain.
+    ///
+    /// # Arguments
+    /// - `pool`: Option<String> - The pool to sync. If None, sync all pools.
+    async fn sync_liquidator(&mut self, pool: Option<String>) -> Result<()> {
+        // Update pool positions for pool_id
+        if pool.is_some() {
+            let pool = pool.unwrap();
+            match get_pool_positions(&self.rpc, &pool, &self.us_public, &self.db_manager).await? {
+                Some(positions) => {
+                    self.bankroll.insert(pool.clone(), positions);
+                }
+                None => (),
+            }
+        } else {
+            for pool in self.pools.clone() {
+                match get_pool_positions(&self.rpc, &pool, &self.us_public, &self.db_manager)
+                    .await?
+                {
+                    Some(positions) => {
+                        self.bankroll.insert(pool.clone(), positions);
                     }
-                    _ => (),
+                    None => (),
+                }
+            }
+        }
+
+        // Update wallet balance for backstop token
+        match get_balance(
+            &self.rpc,
+            self.us_public.clone(),
+            self.backstop_token_address.clone(),
+        )
+        .await
+        {
+            Ok(balance) => {
+                self.wallet
+                    .insert(self.backstop_token_address.clone(), balance);
+            }
+            Err(_) => {
+                self.wallet.insert(self.backstop_token_address.clone(), 0);
+            }
+        }
+        // Update wallet balances for supported liabilities
+        for asset in self.supported_liabilities.clone().iter() {
+            match get_balance(&self.rpc, self.us_public.clone(), asset.clone()).await {
+                Ok(balance) => {
+                    self.wallet.insert(asset.clone(), balance);
+                }
+                Err(_) => {
+                    self.wallet.insert(asset.clone(), 0);
                 }
             }
         }

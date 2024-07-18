@@ -438,11 +438,28 @@ pub async fn bstop_token_to_usdc(
     > = rpc.simulate_transaction_envelope(&transaction).await;
     let usdc_out = match sim_result {
         Ok(sim_result) => {
-            let contract_function_result =
-                ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
-            match &contract_function_result {
-                ScVal::I128(value) => Some(value.into()),
-                _ => None,
+            let result = sim_result.results.get(0);
+            if result.is_none() {
+                error!("Error: failed to simulate backstop token USDC withdrawal - using balance method instead");
+                let total_comet_usdc =
+                    get_balance(rpc, bstop_tkn_address.clone(), usdc_address.clone()).await?;
+                let total_comet_tokens = total_comet_tokens(rpc, bstop_tkn_address.clone()).await?;
+                Some(
+                    total_comet_usdc
+                        .fixed_div_floor(total_comet_tokens, SCALAR_7)
+                        .unwrap()
+                        .fixed_mul_floor(lp_amount, SCALAR_7)
+                        .unwrap(),
+                )
+            } else {
+                let contract_function_result = ScVal::from_xdr_base64(
+                    sim_result.results.get(0).unwrap().xdr.clone(),
+                    Limits::none(),
+                )?;
+                match &contract_function_result {
+                    ScVal::I128(value) => Some(value.into()),
+                    _ => None,
+                }
             }
         }
         Err(_) => {
@@ -460,6 +477,46 @@ pub async fn bstop_token_to_usdc(
         }
     };
     return Ok(usdc_out.unwrap());
+}
+
+pub async fn get_pool_positions(
+    rpc: &Client,
+    pool: &String,
+    user: &String,
+    db_manager: &DbManager,
+) -> Result<Option<UserPositions>> {
+    let reserve_data_key = ScVal::Vec(Some(
+        ScVec::try_from(vec![
+            ScVal::Symbol(ScSymbol::from(ScSymbol::from(
+                StringM::from_str("Positions").unwrap(),
+            ))),
+            ScVal::Address(ScAddress::from_str(user)?),
+        ])
+        .unwrap(),
+    ));
+    let position_ledger_key = stellar_xdr::curr::LedgerKey::ContractData(LedgerKeyContractData {
+        contract: ScAddress::from_str(pool)?,
+        key: reserve_data_key,
+        durability: stellar_xdr::curr::ContractDataDurability::Persistent,
+    });
+    let result = rpc.get_ledger_entries(&vec![position_ledger_key]).await?;
+    if let Some(entries) = result.entries {
+        for entry in entries {
+            let value: LedgerEntryData =
+                LedgerEntryData::from_xdr_base64(entry.xdr, Limits::none()).unwrap();
+
+            match &value {
+                LedgerEntryData::ContractData(_) => {
+                    let user_position =
+                        user_positions_from_ledger_entry(&value, pool, &db_manager)?;
+
+                    return Ok(Some(user_position));
+                }
+                _ => return Ok(None),
+            }
+        }
+    }
+    Ok(None)
 }
 
 // Gets balance of an asset

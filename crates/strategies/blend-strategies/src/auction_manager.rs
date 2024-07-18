@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    constants::SCALAR_7,
+    constants::{SCALAR_7, SCALAR_9},
     db_manager::DbManager,
     helper::{sum_adj_asset_values, sum_assets_value},
+    transaction_builder::Request,
     types::{AuctionData, UserPositions},
 };
 use anyhow::Result;
@@ -224,6 +225,113 @@ impl OngoingAuction {
         info!("Setting percent and target \n lot value: {lot_value} \n bid value: {bid_value} \n raw bid required: {raw_bid_required} \n bid offset: {bid_offset} \n max bid: {our_max_bid}");
         info!("Fill_block: {:?}, profit: {:?} \n bid required: {:?} \n target block: {:?} \n pct to fill: {:?}", fill_block, profit, bid_required, self.target_block, self.pct_to_fill);
         profit
+    }
+    pub fn build_requests(
+        &self,
+        wallet: &HashMap<String, i128>,
+        pool_position: &UserPositions,
+        supported_collateral: &Vec<String>,
+        min_hf: &i128,
+    ) -> Result<Vec<Request>> {
+        let mut new_pool_positions = pool_position.clone();
+        let mut requests: Vec<Request> = vec![Request {
+            request_type: 6 + self.auction_type,
+            address: self.user.clone(),
+            amount: self.pct_to_fill as i128,
+        }];
+
+        if self.auction_type == 0 || self.auction_type == 1 {
+            for (bid_asset, bid_value) in self.auction_data.bid.clone() {
+                if wallet.get(&bid_asset).is_some()
+                    && wallet[&bid_asset] > 100
+                    && self.target_block - self.auction_data.block < 400
+                {
+                    let reserve = self
+                        .db_manager
+                        .get_reserve_config_from_asset(&self.pool, &bid_asset)?;
+                    let wallet_balance = wallet.get(&bid_asset).unwrap();
+                    requests.push(Request {
+                        request_type: 5,
+                        address: bid_asset.clone(),
+                        amount: *wallet_balance,
+                    });
+                    let wallet_dtoken_bal = wallet_balance
+                        .fixed_div_floor(SCALAR_9, reserve.est_d_rate)
+                        .unwrap();
+                    if wallet_dtoken_bal < bid_value {
+                        if new_pool_positions.liabilities.contains_key(&bid_asset) {
+                            new_pool_positions
+                                .liabilities
+                                .entry(bid_asset.clone())
+                                .and_modify(|e| *e += bid_value - wallet_dtoken_bal);
+                        } else {
+                            new_pool_positions
+                                .liabilities
+                                .insert(bid_asset.clone(), bid_value - wallet_dtoken_bal);
+                        }
+                    }
+                }
+            }
+        }
+        let mut liquidator_effective_collateral = sum_adj_asset_values(
+            new_pool_positions.collateral.clone(),
+            &self.pool,
+            true,
+            &self.db_manager,
+        )
+        .unwrap()
+        .1;
+        let liquidator_effective_liabilities = sum_adj_asset_values(
+            new_pool_positions.liabilities.clone(),
+            &self.pool,
+            false,
+            &self.db_manager,
+        )
+        .unwrap()
+        .1;
+        if self.auction_type == 0 {
+            for (index, asset) in supported_collateral.iter().enumerate() {
+                if index != 0 {
+                    let reserve = self
+                        .db_manager
+                        .get_reserve_config_from_asset(&self.pool, asset)?;
+                    let b_tokens = self.auction_data.lot.get(asset);
+                    if b_tokens.is_some() {
+                        if reserve.collateral_factor == 0
+                            || liquidator_effective_collateral
+                                > liquidator_effective_liabilities
+                                    .fixed_mul_ceil(*min_hf, SCALAR_7)
+                                    .unwrap()
+                        {
+                            requests.push(Request {
+                                request_type: 3,
+                                address: asset.clone(),
+                                amount: i64::MAX as i128,
+                            });
+                            liquidator_effective_collateral -= sum_adj_asset_values(
+                                HashMap::from([(asset.to_owned(), b_tokens.unwrap().to_owned())]),
+                                &self.pool,
+                                true,
+                                &self.db_manager,
+                            )
+                            .unwrap()
+                            .1
+                        } else {
+                            liquidator_effective_collateral += sum_adj_asset_values(
+                                HashMap::from([(asset.to_owned(), b_tokens.unwrap().to_owned())]),
+                                &self.pool,
+                                true,
+                                &self.db_manager,
+                            )
+                            .unwrap()
+                            .1
+                        }
+                    }
+                }
+            }
+        }
+
+        return Ok(requests);
     }
 }
 
