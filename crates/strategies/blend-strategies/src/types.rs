@@ -165,3 +165,139 @@ impl AuctionData {
         return scaled_auction;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AuctionData;
+
+    #[test]
+    fn test_scale_auction() {
+        let key_1 = "asset_1".to_string();
+        let key_2 = "asset_2".to_string();
+        let key_3 = "asset_3".to_string();
+
+        let mut bid = std::collections::HashMap::new();
+        bid.insert(key_1.clone(), 100_0000000);
+        bid.insert(key_2.clone(), 200_0000001);
+        let mut lot = std::collections::HashMap::new();
+        lot.insert(key_2.clone(), 1_0000000);
+        lot.insert(key_3.clone(), 5_0000001);
+        let auction_data = AuctionData {
+            bid,
+            lot,
+            block: 100,
+        };
+
+        // 0 blocks -> 100 percent
+        let scaled_auction = auction_data.scale_auction(100, 100);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 2);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 100_0000000);
+        assert_eq!(scaled_auction.bid.get(&key_2).unwrap().clone(), 200_0000001);
+        assert_eq!(scaled_auction.lot.len(), 0);
+
+        // 100 blocks -> 100 percent, validate lot is rounded down
+        let scaled_auction = auction_data.scale_auction(200, 100);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 2);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 100_0000000);
+        assert_eq!(scaled_auction.bid.get(&key_2).unwrap().clone(), 200_0000001);
+        assert_eq!(scaled_auction.lot.len(), 2);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 0_5000000);
+        assert_eq!(scaled_auction.lot.get(&key_3).unwrap().clone(), 2_5000000);
+
+        // 100 blocks -> 50 percent, validate bid is rounded up
+        let scaled_auction = auction_data.scale_auction(200, 50);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 2);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 50_0000000);
+        assert_eq!(scaled_auction.bid.get(&key_2).unwrap().clone(), 100_0000001);
+        assert_eq!(scaled_auction.lot.len(), 2);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 0_2500000);
+        assert_eq!(scaled_auction.lot.get(&key_3).unwrap().clone(), 1_2500000);
+
+        // 200 blocks -> 100 percent (is same)
+        let scaled_auction = auction_data.scale_auction(300, 100);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 2);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 100_0000000);
+        assert_eq!(scaled_auction.bid.get(&key_2).unwrap().clone(), 200_0000001);
+        assert_eq!(scaled_auction.lot.len(), 2);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 1_0000000);
+        assert_eq!(scaled_auction.lot.get(&key_3).unwrap().clone(), 5_0000001);
+
+        // 200 blocks -> 75 percent, validate bid is rounded up and lot is rounded down
+        let scaled_auction = auction_data.scale_auction(300, 75);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 2);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 75_0000000);
+        assert_eq!(scaled_auction.bid.get(&key_2).unwrap().clone(), 150_0000001);
+        assert_eq!(scaled_auction.lot.len(), 2);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 0_7500000);
+        assert_eq!(scaled_auction.lot.get(&key_3).unwrap().clone(), 3_7500000);
+
+        // 300 blocks -> 100 percent
+        let scaled_auction = auction_data.scale_auction(400, 100);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 2);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 50_0000000);
+        assert_eq!(scaled_auction.bid.get(&key_2).unwrap().clone(), 100_0000001);
+        assert_eq!(scaled_auction.lot.len(), 2);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 1_0000000);
+        assert_eq!(scaled_auction.lot.get(&key_3).unwrap().clone(), 5_0000001);
+
+        // 400 blocks -> 100 percent
+        let scaled_auction = auction_data.scale_auction(500, 100);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 0);
+        assert_eq!(scaled_auction.lot.len(), 2);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 1_0000000);
+        assert_eq!(scaled_auction.lot.get(&key_3).unwrap().clone(), 5_0000001);
+
+        // 500 blocks -> 100 percent (unchanged)
+        let scaled_auction = auction_data.scale_auction(600, 100);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 0);
+        assert_eq!(scaled_auction.lot.len(), 2);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 1_0000000);
+        assert_eq!(scaled_auction.lot.get(&key_3).unwrap().clone(), 5_0000001);
+    }
+
+    #[test]
+    fn test_scale_auction_1_stroop_rounding() {
+        let key_1 = "asset_1".to_string();
+        let key_2 = "asset_2".to_string();
+
+        let mut bid = std::collections::HashMap::new();
+        bid.insert(key_1.clone(), 1);
+        let mut lot = std::collections::HashMap::new();
+        lot.insert(key_2.clone(), 1);
+        let auction_data = AuctionData {
+            bid,
+            lot,
+            block: 100,
+        };
+
+        // 1 blocks -> 10 percent
+        let scaled_auction = auction_data.scale_auction(101, 10);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 1);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 1);
+        assert_eq!(scaled_auction.lot.len(), 0);
+
+        // 399 blocks -> 10 percent
+        let scaled_auction = auction_data.scale_auction(499, 10);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 1);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 1);
+        assert_eq!(scaled_auction.lot.len(), 0);
+
+        // 399 blocks -> 100 percent
+        let scaled_auction = auction_data.scale_auction(499, 100);
+        assert_eq!(scaled_auction.block, 100);
+        assert_eq!(scaled_auction.bid.len(), 1);
+        assert_eq!(scaled_auction.bid.get(&key_1).unwrap().clone(), 1);
+        assert_eq!(scaled_auction.lot.len(), 1);
+        assert_eq!(scaled_auction.lot.get(&key_2).unwrap().clone(), 1);
+    }
+}
