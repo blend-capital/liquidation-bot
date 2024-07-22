@@ -11,6 +11,7 @@ pub struct BlendTxBuilder {
     pub signing_key: SigningKey,
 }
 
+#[derive(Debug, Clone)]
 pub struct Request {
     pub request_type: u32,
     pub address: String,

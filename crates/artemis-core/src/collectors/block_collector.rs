@@ -2,8 +2,8 @@ use crate::types::{Collector, CollectorStream};
 use anyhow::Result;
 use async_trait::async_trait;
 use core::time;
-use stellar_rpc_client::Client;
 use std::thread::sleep;
+use stellar_rpc_client::Client;
 use tokio::sync::broadcast::{self};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 // / A collector that listens for new blockchain event logs based on a [Filter](Filter),

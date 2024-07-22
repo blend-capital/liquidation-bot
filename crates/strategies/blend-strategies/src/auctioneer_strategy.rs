@@ -57,8 +57,6 @@ impl BlendAuctioneer {
     pub async fn new(config: &Config, signing_key: &SigningKey) -> Result<Self> {
         let client = Client::new(config.rpc_url.as_str())?;
 
-
-
         Ok(Self {
             rpc: client,
             db_manager: DbManager::new(config.db_path.clone()),
@@ -302,7 +300,7 @@ impl BlendAuctioneer {
                     op: tx_builder.new_bad_debt_auction(),
                     gas_bid_info: None,
                     signing_key: self.us.clone(),
-                    max_retries: 100,
+                    max_retries: 10,
                 }));
             }
             "set_reserve" => {
@@ -705,11 +703,11 @@ impl BlendAuctioneer {
                 &self.rpc,
                 &self.oracle_id,
                 &self.oracle_decimals,
-                &assets,
+                &self.supported_liabilities,
                 &self.db_manager,
             )
             .await?;
-            
+
             // evalaute users ever 10 blocks for potential liquidations
             for pool in self.pools.iter() {
                 for users in self.users.get(pool).iter_mut() {
@@ -739,7 +737,7 @@ impl BlendAuctioneer {
         }
 
         match heartbeat(&event.number) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => error!("Heartbeat failed {}", event.number),
         }
         return Ok(actions);
@@ -863,7 +861,7 @@ impl BlendAuctioneer {
                 op: tx_builder.bad_debt(user),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
-                max_retries: 100,
+                max_retries: 10,
             }));
         }
 
@@ -873,7 +871,7 @@ impl BlendAuctioneer {
                 op: tx_builder.new_liquidation_auction(user, score),
                 gas_bid_info: None,
                 signing_key: self.us.clone(),
-                max_retries: 100,
+                max_retries: 10,
             }));
         }
         None
