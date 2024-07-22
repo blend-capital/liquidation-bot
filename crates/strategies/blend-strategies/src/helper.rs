@@ -548,7 +548,10 @@ pub async fn get_balance(rpc: &Client, user: String, asset: String) -> Result<i1
                 ScVal::from_xdr_base64(result.xdr.clone(), Limits::none())?;
             match &contract_function_result {
                 ScVal::I128(value) => return Ok(value.into()),
-                _ => return Err(Error::msg("Error: failed to get balance")),
+                _ => {
+                    error!("Error: failed to get balance");
+                    return Ok(0);
+                }
             }
         }
         None => return Ok(0),
