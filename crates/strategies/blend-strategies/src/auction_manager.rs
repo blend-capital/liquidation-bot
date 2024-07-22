@@ -241,11 +241,11 @@ impl OngoingAuction {
             address: self.user.clone(),
             amount: self.pct_to_fill as i128,
         }];
+        let scaled_auction = self
+            .auction_data
+            .scale_auction(submit_block, self.pct_to_fill);
 
         if self.auction_type == 0 || self.auction_type == 1 {
-            let scaled_auction = self
-                .auction_data
-                .scale_auction(submit_block, self.pct_to_fill);
             for (bid_asset, bid_value) in scaled_auction.bid.clone() {
                 if wallet.get(&bid_asset).is_some()
                     && wallet[&bid_asset] > 100
@@ -304,7 +304,7 @@ impl OngoingAuction {
                 // don't attempt to withdraw the first collateral asset or any asset that has an
                 // existing position
                 if index != 0 && pool_position.collateral.get(asset).unwrap_or(&0).clone() == 0 {
-                    if let Some(b_tokens) = self.auction_data.lot.get(asset) {
+                    if let Some(b_tokens) = scaled_auction.lot.get(asset) {
                         if b_tokens.clone() == 0 {
                             continue;
                         }
