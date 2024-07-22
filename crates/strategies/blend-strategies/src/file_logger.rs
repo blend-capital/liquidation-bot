@@ -19,10 +19,12 @@ pub fn heartbeat(block: &u32, dir: &str) -> Result<(), Error> {
     let file_path = Path::new(dir).join("heartbeat.txt");
 
     let mut output = OpenOptions::new()
-        .append(true)
+        .write(true)
         .create(true)
+        .truncate(true)
         .open(file_path)?;
-    writeln!(output, "{}", block)?;
+
+    write!(output, "{}", block)?;
     output.flush()?;
     Ok(())
 }
