@@ -143,7 +143,7 @@ impl Strategy<Event, Action> for BlendAuctioneer {
                                     event.clone(),
                                     e
                                 );
-                                log_error(&log).unwrap();
+                                log_error(&log, &self.db_manager.db_directory).unwrap();
                             }
                             sleep(Duration::from_millis(500));
                         }
@@ -162,7 +162,7 @@ impl Strategy<Event, Action> for BlendAuctioneer {
                                     block.clone(),
                                     e
                                 );
-                                log_error(&log).unwrap();
+                                log_error(&log, &self.db_manager.db_directory).unwrap();
                             }
                             sleep(Duration::from_millis(500));
                         }
@@ -736,7 +736,7 @@ impl BlendAuctioneer {
             }
         }
 
-        match heartbeat(&event.number) {
+        match heartbeat(&event.number, &self.db_manager.db_directory) {
             Ok(_) => {}
             Err(_) => error!("Heartbeat failed {}", event.number),
         }

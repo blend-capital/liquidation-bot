@@ -148,7 +148,7 @@ impl Strategy<Event, Action> for BlendLiquidator {
                                     event.clone(),
                                     e
                                 );
-                                log_error(&log).unwrap();
+                                log_error(&log, &self.db_manager.db_directory).unwrap();
                             }
                             sleep(Duration::from_millis(500));
                         }
@@ -166,7 +166,7 @@ impl Strategy<Event, Action> for BlendLiquidator {
                                     block.clone(),
                                     e
                                 );
-                                log_error(&log).unwrap();
+                                log_error(&log, &self.db_manager.db_directory).unwrap();
                             }
                             sleep(Duration::from_millis(500));
                         }

@@ -1,10 +1,10 @@
 use anyhow::Result;
-use std::env;
 use std::fs::OpenOptions;
 use std::io::{Error, Write};
+use std::path::Path;
 
-pub fn log_error(msg: &str) -> Result<(), Error> {
-    let file_path = env::current_dir()?.join("error_logs.txt");
+pub fn log_error(msg: &str, dir: &str) -> Result<(), Error> {
+    let file_path = Path::new(dir).join("error_logs.txt");
 
     let mut output = OpenOptions::new()
         .append(true)
@@ -15,12 +15,12 @@ pub fn log_error(msg: &str) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn heartbeat(block: &u32) -> Result<(), Error> {
-    let file_path = env::current_dir()?.join("heartbeat.txt");
+pub fn heartbeat(block: &u32, dir: &str) -> Result<(), Error> {
+    let file_path = Path::new(dir).join("heartbeat.txt");
 
     let mut output = OpenOptions::new()
-        .create(true)
         .append(true)
+        .create(true)
         .open(file_path)?;
     writeln!(output, "{}", block)?;
     output.flush()?;
