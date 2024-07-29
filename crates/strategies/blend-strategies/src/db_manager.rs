@@ -283,7 +283,7 @@ impl DbManager {
         match db.execute(
             "INSERT INTO filled_auctions (fill_block,lot_assets,lot_amounts,bid_assets,bid_amounts,percent_filled) VALUES (?1,?2,?3,?4,?5,?6)",
             params![
-                fill_block as u32,
+                fill_block - auction_data.block as u32,
                 lot_assets,
                 lot_values,
                 bid_assets,

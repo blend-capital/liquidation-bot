@@ -530,7 +530,6 @@ impl BlendLiquidator {
                         &self.min_hf,
                         event.number + 1,
                     )?;
-                    info!("{:?}", pending.auction_data);
                     info!(
                         "Sending auction fill to executor for user: {:?} with requests: {:?}",
                         pending.user.clone(),

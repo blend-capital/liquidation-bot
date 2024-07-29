@@ -203,20 +203,31 @@ impl OngoingAuction {
         };
         match self.auction_type {
             0 => {
-                info!("Calculating fill for user liquidation auction")
+                info!(
+                    "Calculating fill for user liquidation auction {:?}",
+                    self.auction_data
+                )
             }
             1 => {
-                info!("Calculating fill for bad debt auction")
+                info!(
+                    "Calculating fill for bad debt auction {:?}",
+                    self.auction_data
+                )
             }
             2 => {
-                info!("Calculating fill for interest auction")
+                info!(
+                    "Calculating fill for interest auction {:?}",
+                    self.auction_data
+                )
             }
             _ => {
                 error!("Error: auction type not recognized")
             }
         }
-        info!("Setting percent and target \n lot value: {lot_value} \n bid value: {bid_value} \n raw bid required: {raw_bid_required} \n bid offset: {bid_offset} \n max bid: {our_max_bid}");
-        info!("Fill_block: {:?}, profit: {:?} \n bid required: {:?} \n target block: {:?} \n pct to fill: {:?}", fill_block, profit, bid_required, self.target_block, self.pct_to_fill);
+        info!(
+            "\nFill_block: {:?}\n profit: {:?}\n target block: {:?}\n pct to fill: {:?}",
+            fill_block, profit, self.target_block, self.pct_to_fill
+        );
         profit
     }
 
@@ -353,6 +364,7 @@ fn get_fill_info(min_profit_pct: i128, lot_value: i128, bid_value: i128) -> (i12
                 .unwrap_or(1000000)
                 >= min_profit_pct
         {
+            println!("profit: {:?}, mod bid value: {:?}", profit, mod_bid_value);
             return (i, profit);
         }
     }
