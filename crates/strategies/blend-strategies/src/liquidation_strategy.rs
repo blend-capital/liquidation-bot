@@ -69,6 +69,8 @@ pub struct BlendLiquidator {
     usdc_address: String,
     // XLM address
     xlm_address: String,
+    // Whether or not we will force fill liquidations
+    force_fill: bool,
 }
 
 impl BlendLiquidator {
@@ -100,6 +102,7 @@ impl BlendLiquidator {
             backstop_token_address: config.backstop_token_address.clone(),
             usdc_address: config.usdc_token_address.clone(),
             xlm_address: config.xlm_address.clone(),
+            force_fill: config.force_fill,
         })
     }
 }
@@ -511,10 +514,7 @@ impl BlendLiquidator {
 
                     _ => panic!("Invalid auction type"),
                 };
-                if pending.target_block <= event.number
-                    && pending.block_submitted < event.number
-                    && profit > self.required_profit_pct
-                {
+                if self.assess_fill(event.number, pending) {
                     pending.block_submitted = event.number + 2;
                     let op_builder = BlendTxBuilder {
                         contract_id: pending.pool.clone(),
@@ -850,5 +850,24 @@ impl BlendLiquidator {
         }
 
         Ok(())
+    }
+    // checks if we should fill the auction
+    fn assess_fill(&self, block: u32, pending_fill: &OngoingAuction) -> bool {
+        if self.force_fill {
+            if (pending_fill.auction_type == 0 || pending_fill.auction_type == 1)
+                && (block - pending_fill.auction_data.block) >= 198
+            {
+                return true;
+            } else if pending_fill.auction_type == 2
+                && (block - pending_fill.auction_data.block) >= 350
+            {
+                return true;
+            }
+        }
+        if pending_fill.target_block <= block && pending_fill.block_submitted < block {
+            return true;
+        } else {
+            return false;
+        }
     }
 }

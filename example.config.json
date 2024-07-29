@@ -14,5 +14,6 @@
   "oracle_id": "Oracle Address",
   "min_hf": 12000000,
   "required_profit_pct": 2000000,
-  "oracle_decimals": 7
+  "oracle_decimals": 7,
+  "force_fill": true
 }
