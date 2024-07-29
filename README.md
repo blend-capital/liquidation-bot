@@ -2,6 +2,13 @@
 
 The Blend Liquidation Bot is a project that utilizes the [Artemis framework](https://github.com/paradigmxyz/artemis) to create a liquidation bot for the Blend protocol on the Soroban blockchain. The bot includes auction creation and filling functionalities that are triggered by contract events streamed from an rpc. The purpose of this bot is to create user liquidation, interest, and bad debt auctions and to fill them when the desired profitability is met. It is recommended to run a private rpc to submit transactions as public rpcs will lead to rate limiting issues.
 
+## Operating the Bot
+
+### Prerequisites
+
+- Any account used to liquidate users or fill backstop auctions must have collateral in that same pool. Otherwise they will be unable to fill the liquidation. The more collateral they have the larger the liquidations they can fill.
+- Any account used to fill interest auctions must have BLND:USDC liquidity pool tokens
+
 ## Running the Rust Project
 
 ### Prerequisites
