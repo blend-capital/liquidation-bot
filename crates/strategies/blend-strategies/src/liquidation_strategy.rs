@@ -855,11 +855,11 @@ impl BlendLiquidator {
     fn assess_fill(&self, block: u32, pending_fill: &OngoingAuction) -> bool {
         if self.force_fill {
             if (pending_fill.auction_type == 0 || pending_fill.auction_type == 1)
-                && (block - pending_fill.block_submitted) >= 198
+                && (block - pending_fill.auction_data.block) >= 198
             {
                 return true;
             } else if pending_fill.auction_type == 2
-                && (block - pending_fill.block_submitted) >= 350
+                && (block - pending_fill.auction_data.block) >= 350
             {
                 return true;
             }
