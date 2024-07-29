@@ -643,14 +643,15 @@ pub async fn get_asset_prices_db(
         }
         let contract_function_result =
             ScVal::from_xdr_base64(sim_result.results[0].xdr.clone(), Limits::none())?;
-        let mut price: i128 = 0;
         match &contract_function_result {
             ScVal::Map(data_map) => {
                 if let Some(data_map) = data_map {
                     let entry = &data_map[0].val;
                     match entry {
                         ScVal::I128(value) => {
-                            price = value.into();
+                            let mut price: i128 = value.into();
+                            price = price * SCALAR_7 / (10 as i128).pow(*oracle_decimals);
+                            db_manager.set_asset_price(asset.clone(), price)?;
                         }
                         _ => (),
                     }
@@ -658,9 +659,6 @@ pub async fn get_asset_prices_db(
             }
             _ => (),
         }
-        // adjust price to seven decimals
-        price = price * SCALAR_7 / (10 as i128).pow(*oracle_decimals);
-        db_manager.set_asset_price(asset.clone(), price)?;
     }
     Ok(())
 }
