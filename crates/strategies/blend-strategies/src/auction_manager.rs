@@ -359,12 +359,9 @@ fn get_fill_info(min_profit_pct: i128, lot_value: i128, bid_value: i128) -> (i12
         let profit = mod_lot_value - mod_bid_value;
         // check if our profit has reached the minimum profit percentage
         if profit > 0
-            && profit
-                .fixed_div_floor(mod_bid_value, SCALAR_7)
-                .unwrap_or(1000000)
-                >= min_profit_pct
+            && (mod_bid_value == 0
+                || profit.fixed_div_floor(mod_bid_value, SCALAR_7).unwrap_or(0) >= min_profit_pct)
         {
-            println!("profit: {:?}, mod bid value: {:?}", profit, mod_bid_value);
             return (i, profit);
         }
     }
