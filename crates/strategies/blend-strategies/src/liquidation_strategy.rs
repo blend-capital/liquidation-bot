@@ -49,8 +49,8 @@ pub struct BlendLiquidator {
     backstop_id: String,
     /// Amount of profits to bid in gas
     bid_percentage: u64,
-    /// Required profitability for auctions
-    required_profit: i128,
+    /// Required profitability percent for auctions
+    required_profit_pct: i128,
     /// Pending auction fills
     pending_fill: Vec<OngoingAuction>,
     /// Our positions
@@ -87,7 +87,7 @@ impl BlendLiquidator {
             pools: config.pools.clone(),
             backstop_id: config.backstop.clone(),
             bid_percentage: config.bid_percentage,
-            required_profit: config.required_profit,
+            required_profit_pct: config.required_profit_pct,
             pending_fill: vec![],
             bankroll: HashMap::new(),
             wallet: HashMap::new(),
@@ -234,7 +234,7 @@ impl BlendLiquidator {
                         user.clone(),
                         auction_data.clone(),
                         0,
-                        self.required_profit,
+                        self.required_profit_pct,
                         self.db_manager.clone(),
                     );
                     pending_fill
@@ -296,7 +296,7 @@ impl BlendLiquidator {
                     self.backstop_id.clone(),
                     auction_data.clone(),
                     auction_type,
-                    self.required_profit,
+                    self.required_profit_pct,
                     self.db_manager.clone(),
                 );
                 //Bad debt auction
@@ -513,7 +513,7 @@ impl BlendLiquidator {
                 };
                 if pending.target_block <= event.number
                     && pending.block_submitted < event.number
-                    && profit > self.required_profit
+                    && profit > self.required_profit_pct
                 {
                     pending.block_submitted = event.number + 2;
                     let op_builder = BlendTxBuilder {
@@ -667,7 +667,7 @@ impl BlendLiquidator {
                                 user.clone(),
                                 auction_data.clone(),
                                 0,
-                                self.required_profit,
+                                self.required_profit_pct,
                                 self.db_manager.clone(),
                             );
                             pending_fill.calc_liquidation_fill(
@@ -739,7 +739,7 @@ impl BlendLiquidator {
                                 self.backstop_id.clone(),
                                 auction_data.clone(),
                                 1,
-                                self.required_profit,
+                                self.required_profit_pct,
                                 self.db_manager.clone(),
                             );
                             let lot_value = bstop_token_to_usdc(
@@ -818,7 +818,7 @@ impl BlendLiquidator {
                             self.backstop_id.clone(),
                             auction_data.clone(),
                             2,
-                            self.required_profit,
+                            self.required_profit_pct,
                             self.db_manager.clone(),
                         );
                         let bid_value = bstop_token_to_usdc(
