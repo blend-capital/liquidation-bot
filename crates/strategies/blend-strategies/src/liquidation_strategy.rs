@@ -344,7 +344,7 @@ impl BlendLiquidator {
                     pending_fill.calc_interest_fill(
                         self.wallet
                             .get(&self.backstop_token_address)
-                            .unwrap()
+                            .unwrap_or(&0)
                             .clone(),
                         self.backstop_token_address.clone(),
                         bstop_token_to_usdc(
@@ -361,8 +361,10 @@ impl BlendLiquidator {
                         .await
                         .unwrap(),
                     )?;
-                    info!("New pending interest fill: {:?}", pending_fill.clone());
-                    self.pending_fill.push(pending_fill);
+                    if pending_fill.pct_to_fill > 0 {
+                        info!("New pending interest fill: {:?}", pending_fill.clone());
+                        self.pending_fill.push(pending_fill);
+                    }
                 }
             }
             "fill_auction" => {
@@ -495,7 +497,7 @@ impl BlendLiquidator {
                     2 => pending.calc_interest_fill(
                         self.wallet
                             .get(&self.backstop_token_address)
-                            .unwrap()
+                            .unwrap_or(&0)
                             .clone(),
                         self.backstop_token_address.clone(),
                         bstop_token_to_usdc(
@@ -836,12 +838,15 @@ impl BlendLiquidator {
                         pending_fill.calc_interest_fill(
                             self.wallet
                                 .get(&self.backstop_token_address)
-                                .unwrap()
+                                .unwrap_or(&0)
                                 .clone(),
                             self.backstop_token_address.clone(),
                             bid_value,
                         )?;
-                        self.pending_fill.push(pending_fill);
+                        if pending_fill.pct_to_fill > 0 {
+                            info!("New pending interest fill: {:?}", pending_fill.clone());
+                            self.pending_fill.push(pending_fill);
+                        }
                     }
                     _ => (),
                 }
