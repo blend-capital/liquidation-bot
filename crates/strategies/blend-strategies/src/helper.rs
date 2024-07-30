@@ -449,7 +449,8 @@ pub async fn bstop_token_to_usdc(
                         .fixed_div_floor(total_comet_tokens, SCALAR_7)
                         .unwrap()
                         .fixed_mul_floor(lp_amount, SCALAR_7)
-                        .unwrap(),
+                        .unwrap()
+                        * 5,
                 )
             } else {
                 let contract_function_result = ScVal::from_xdr_base64(
@@ -472,7 +473,8 @@ pub async fn bstop_token_to_usdc(
                     .fixed_div_floor(total_comet_tokens, SCALAR_7)
                     .unwrap()
                     .fixed_mul_floor(lp_amount, SCALAR_7)
-                    .unwrap(),
+                    .unwrap()
+                    * 5,
             )
         }
     };
