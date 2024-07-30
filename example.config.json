@@ -13,6 +13,7 @@
   "bid_percentage": 0,
   "oracle_id": "Oracle Address",
   "min_hf": 12000000,
-  "required_profit": 10000000,
-  "oracle_decimals": 7
+  "required_profit_pct": 2000000,
+  "oracle_decimals": 7,
+  "force_fill": true
 }

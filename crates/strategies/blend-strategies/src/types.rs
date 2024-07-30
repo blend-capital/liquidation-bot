@@ -38,8 +38,9 @@ pub struct Config {
     pub bid_percentage: u64,
     pub oracle_id: String,
     pub min_hf: i128,
-    pub required_profit: i128,
+    pub required_profit_pct: i128,
     pub oracle_decimals: u32,
+    pub force_fill: bool,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct PendingFill {

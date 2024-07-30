@@ -20,7 +20,7 @@ pub struct OngoingAuction {
     pub pct_to_fill: u64,
     pub pct_filled: u64,
     pub auction_type: u32,
-    pub min_profit: i128,
+    pub min_profit_pct: i128,
     pub db_manager: DbManager,
     pub block_submitted: u32,
 }
@@ -31,7 +31,7 @@ impl OngoingAuction {
         user: String,
         auction_data: AuctionData,
         auction_type: u32, //0 for liquidation, 1 for interest, 2 for bad debt
-        min_profit: i128,
+        min_profit_pct: i128,
         db_manager: DbManager,
     ) -> Self {
         Self {
@@ -42,7 +42,7 @@ impl OngoingAuction {
             pct_to_fill: 0,
             pct_filled: 0,
             auction_type,
-            min_profit,
+            min_profit_pct,
             db_manager,
             block_submitted: 0,
         }
@@ -173,57 +173,61 @@ impl OngoingAuction {
         mut bid_offset: i128,
         our_max_bid: i128,
     ) -> i128 {
-        // apply pct_filled
+        // apply pct_filled so we know how much of the auction remains to be filled and adjust related values
         let pct_remaining = 100 - self.pct_filled as i128;
         lot_value = lot_value.fixed_mul_floor(pct_remaining, 100).unwrap();
         bid_value = bid_value.fixed_mul_ceil(pct_remaining, 100).unwrap();
         raw_bid_required = raw_bid_required.fixed_mul_ceil(pct_remaining, 100).unwrap();
         bid_offset = bid_offset.fixed_mul_floor(pct_remaining, 100).unwrap();
 
+        // If we cannot bid anything then we will attempt to fill the auction at block n+400 when no repayment is required
         if our_max_bid == 0 {
             self.pct_to_fill = 100;
             self.target_block = self.auction_data.block + 400;
             return lot_value;
         }
-        let (fill_block, mut profit) = get_fill_info(self.min_profit, lot_value, bid_value);
+        // get the block we should fill at and the expected profit at that block
+        let (fill_block, mut profit) = get_fill_info(self.min_profit_pct, lot_value, bid_value);
+        // get the bid required at the fill block - this considers collateral received form the auction lot
         let bid_required = get_bid_required(fill_block, raw_bid_required, bid_offset);
         self.target_block = fill_block as u32 + self.auction_data.block;
+        // if our max bid is greater than the bid required we can afford to fill the full auction
         self.pct_to_fill = if our_max_bid >= bid_required {
             100
         } else {
+            // calcuate the percent that we will fill
             let pct = our_max_bid.fixed_div_floor(bid_required, 100).unwrap() as i128;
+            // redefine our expected profit based on the new fill percentage
             profit = profit.fixed_mul_floor(pct, 100).unwrap();
-            let profit_dif = self.min_profit - profit;
-            if profit_dif > 0 {
-                let profit_per_block = lot_value
-                    .fixed_mul_floor(pct, 100)
-                    .unwrap()
-                    .fixed_div_floor(200, 1)
-                    .unwrap();
-                let additional_blocks = profit_dif.fixed_div_ceil(profit_per_block, 1).unwrap();
-                self.target_block += additional_blocks as u32;
-                profit += profit_per_block
-                    .fixed_mul_floor(additional_blocks, 1)
-                    .unwrap();
-            }
             pct as u64
         };
         match self.auction_type {
             0 => {
-                info!("Calculating fill for user liquidation auction")
+                info!(
+                    "Calculating fill for user liquidation auction {:?}",
+                    self.auction_data
+                )
             }
             1 => {
-                info!("Calculating fill for bad debt auction")
+                info!(
+                    "Calculating fill for bad debt auction {:?}",
+                    self.auction_data
+                )
             }
             2 => {
-                info!("Calculating fill for interest auction")
+                info!(
+                    "Calculating fill for interest auction {:?}",
+                    self.auction_data
+                )
             }
             _ => {
                 error!("Error: auction type not recognized")
             }
         }
-        info!("Setting percent and target \n lot value: {lot_value} \n bid value: {bid_value} \n raw bid required: {raw_bid_required} \n bid offset: {bid_offset} \n max bid: {our_max_bid}");
-        info!("Fill_block: {:?}, profit: {:?} \n bid required: {:?} \n target block: {:?} \n pct to fill: {:?}", fill_block, profit, bid_required, self.target_block, self.pct_to_fill);
+        info!(
+            "\nFill_block: {:?}\n profit: {:?}\n target block: {:?}\n pct to fill: {:?}",
+            fill_block, profit, self.target_block, self.pct_to_fill
+        );
         profit
     }
 
@@ -339,10 +343,12 @@ impl OngoingAuction {
 }
 
 // returns the block we should bid at and the expected profit at that block
-fn get_fill_info(min_profit: i128, lot_value: i128, bid_value: i128) -> (i128, i128) {
+fn get_fill_info(min_profit_pct: i128, lot_value: i128, bid_value: i128) -> (i128, i128) {
     let mut mod_lot_value = 0;
     let mut mod_bid_value = bid_value.clone();
+    // defines how much the lot value increases per block
     let step_lot_value = lot_value / 200;
+    // defines how much the bid value decreases per block
     let step_bid_value = bid_value / 200;
     for i in 1..400 {
         if i <= 200 {
@@ -351,7 +357,11 @@ fn get_fill_info(min_profit: i128, lot_value: i128, bid_value: i128) -> (i128, i
             mod_bid_value -= step_bid_value;
         }
         let profit = mod_lot_value - mod_bid_value;
-        if profit >= min_profit {
+        // check if our profit has reached the minimum profit percentage
+        if profit > 0
+            && (mod_bid_value == 0
+                || profit.fixed_div_floor(mod_bid_value, SCALAR_7).unwrap_or(0) >= min_profit_pct)
+        {
             return (i, profit);
         }
     }
@@ -369,13 +379,18 @@ fn get_max_delta_hf(collateral: i128, debt: i128, new_debt: i128, min_hf: i128) 
 }
 
 fn get_bid_required(fill_block: i128, raw_bid_required: i128, bid_offset: i128) -> i128 {
+    // if the fill block is over 200 we need to reduce the bid required based on how many blocks have passed beyond 200
     if fill_block > 200 {
+        // bid required is reduced by 0.5% per block over 200
         raw_bid_required
             .fixed_mul_ceil(1e7 as i128 - 0_005_0000 * (fill_block - 200), SCALAR_7)
             .unwrap()
+            // we get the full bid offset since we are receiving the full lot
             - bid_offset
+    // if the fill block is under 200 we need to reduce the bid offset based on how many blocks under 200 we're filling at
     } else {
         raw_bid_required
+            // percent of bid offset we get is .5% * fill_block/200
             - bid_offset
                 .fixed_mul_floor(0_005_0000 * fill_block, SCALAR_7)
                 .unwrap()
