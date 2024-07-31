@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{Error, Result};
 use ed25519_dalek::SigningKey;
+use serde_json;
 use soroban_fixed_point_math::FixedPoint;
 use soroban_spec_tools::from_string_primitive;
 use stellar_rpc_client::Client;
@@ -804,6 +805,22 @@ pub fn validate_assets(
         }
     }
     return true;
+}
+
+pub async fn send_slack_message(webhook_url: &str, message: &str) -> Result<()> {
+    if webhook_url.is_empty() {
+        return Ok(());
+    }
+    let res = reqwest::Client::new()
+        .post(webhook_url)
+        .body(serde_json::json!({ "text": message }).to_string())
+        .send()
+        .await;
+
+    if res.is_err() {
+        error!("Error: failed to send slack message {:?}", res.err());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

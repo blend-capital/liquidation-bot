@@ -82,19 +82,20 @@ impl Executor<SubmitStellarTx> for SorobanExecutor {
                         );
 
                         if !self.slack_api_url_key.is_empty() {
-                            let client: reqwest::Client = reqwest::Client::new();
-                            let slack_msg = serde_json::json!({
-                            "text": format!("<!channel> - Failed to submit tx: {:?} Tx Error: {:?}",
-                                match action.op.body.clone() {
-                                    stellar_xdr::curr::OperationBody::InvokeHostFunction(body) =>
-                                        Some(body.host_function),
-                                    _ => None,
-                                },
-                                e
-                            )
-                            })
+                            let public_key = Strkey::PublicKeyEd25519(Ed25519PublicKey(
+                                action.signing_key.verifying_key().to_bytes(),
+                            ))
                             .to_string();
-                            client
+                            let tx = match action.op.body.clone() {
+                                stellar_xdr::curr::OperationBody::InvokeHostFunction(body) => {
+                                    Some(body.host_function)
+                                }
+                                _ => None,
+                            };
+                            let slack_msg = serde_json::json!({
+                                "text": format!("<!channel> - Liquidator: {} Failed to submit tx: {:?} Tx Error: {:?}", public_key, tx, e)
+                            }).to_string();
+                            reqwest::Client::new()
                                 .post(self.slack_api_url_key.clone())
                                 .body(slack_msg)
                                 .send()
@@ -167,39 +168,35 @@ async fn submit(
     });
 
     let res = rpc.send_transaction_polling(&signed_tx_envelope).await?;
-    info!("Submitted tx: {:?}\n", action.op.body.clone());
-    info!("Soroban response: {:?}", res.status);
+
     let log_msg = format!(
-        "Submitted tx: {:?} {:?} with response: {:?} {:?}\n",
+        "Submitted tx: {:?} with response: {:?}n",
         match action.op.body.clone() {
             stellar_xdr::curr::OperationBody::InvokeHostFunction(body) => Some(body.host_function),
             _ => None,
         },
-        action.gas_bid_info,
         res.status,
-        res.envelope
     );
+    info!(log_msg);
+    log_transaction(&log_msg, log_path)?;
     if !slack_api_url_key.is_empty() {
-        let client = reqwest::Client::new();
         let slack_msg = serde_json::json!({
-            "text": format!("<!channel> - Submitted tx: {:?} Tx Status: {:?}",
-                match action.op.body.clone() {
-                    stellar_xdr::curr::OperationBody::InvokeHostFunction(body) =>
-                        Some(body.host_function),
-                    _ => None,
-                },
-                res.status,
+            "text": format!("<!channel> - Liquidator: {} {}",
+            Strkey::PublicKeyEd25519(Ed25519PublicKey(
+                action.signing_key.verifying_key().to_bytes(),
+            ))
+            .to_string(),
+            log_msg
             )
         })
         .to_string();
 
-        client
+        reqwest::Client::new()
             .post(slack_api_url_key)
             .body(slack_msg)
             .send()
             .await?;
     }
-    log_transaction(&log_msg, log_path)?;
     Ok(())
 }
 
