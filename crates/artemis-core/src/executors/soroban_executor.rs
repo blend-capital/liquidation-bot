@@ -177,7 +177,7 @@ async fn submit(
         },
         res.status,
     );
-    info!(log_msg);
+    info!("{}", log_msg);
     log_transaction(&log_msg, log_path)?;
     if !slack_api_url_key.is_empty() {
         let slack_msg = serde_json::json!({

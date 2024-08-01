@@ -225,7 +225,7 @@ impl OngoingAuction {
             }
         }
         info!(
-            "\nFill_block: {:?}\n profit: {:?}\n target block: {:?}\n pct to fill: {:?}",
+            "\nFill_block: {:?}\nprofit: {:?}\ntarget block: {:?}\npct to fill: {:?}",
             fill_block, profit, self.target_block, self.pct_to_fill
         );
         profit
@@ -238,6 +238,7 @@ impl OngoingAuction {
         supported_collateral: &Vec<String>,
         min_hf: &i128,
         submit_block: u32,
+        xlm_id: &String,
     ) -> Result<Vec<Request>> {
         let mut new_pool_positions = pool_position.clone();
         let mut requests: Vec<Request> = vec![Request {
@@ -258,12 +259,28 @@ impl OngoingAuction {
                     let reserve = self
                         .db_manager
                         .get_reserve_config_from_asset(&self.pool, &bid_asset)?;
-                    let wallet_balance = wallet.get(&bid_asset).unwrap();
-                    requests.push(Request {
-                        request_type: 5,
-                        address: bid_asset.clone(),
-                        amount: *wallet_balance,
-                    });
+                    let mut wallet_balance = wallet.get(&bid_asset).unwrap().clone();
+
+                    // If the bid asset is XLM we need to reserve for the transaction fees
+                    if bid_asset == *xlm_id {
+                        wallet_balance -= 100 * SCALAR_7;
+                        if wallet_balance > 0 {
+                            requests.push(Request {
+                                request_type: 5,
+                                address: bid_asset.clone(),
+                                amount: wallet_balance,
+                            });
+                        } else {
+                            wallet_balance = 0;
+                        }
+                    } else {
+                        requests.push(Request {
+                            request_type: 5,
+                            address: bid_asset.clone(),
+                            amount: wallet_balance,
+                        });
+                    }
+
                     let wallet_dtoken_bal = wallet_balance
                         .fixed_div_floor(SCALAR_9, reserve.est_d_rate)
                         .unwrap();
