@@ -235,13 +235,14 @@ impl BlendLiquidator {
                 }
 
                 let msg = format!(
-                        "<!channel> - Liquidator: {} found a new user liquidation auction for user: {:?} with lot: {:?} bid: {:?} pct_to_fill: {:?} target_block: {:?}",
+                        "<!channel> - Liquidator: {} found a new user liquidation auction for user: {:?} with lot: {:?} bid: {:?} start block: {} pct_to_fill: {:?} target_block: {:?}",
                         self.us_public,
                         user,
                         auction_data.lot,
                         auction_data.bid,
+                        auction_data.block,
                         pending_fill.pct_to_fill,
-                        pending_fill.target_block - pending_fill.auction_data.block
+                        pending_fill.target_block
                     );
                 info!("{}", msg.clone());
                 send_slack_message(&self.slack_api_url_key, &msg).await?;
@@ -345,13 +346,14 @@ impl BlendLiquidator {
                     "unknown"
                 };
                 let msg = format!(
-                        "<!channel> - Liquidator: {} found a new {} auction with lot: {:?} bid: {:?} pct_to_fill: {:?} target_block: {:?}",
+                        "<!channel> - Liquidator: {} found a new {} auction with lot: {:?} bid: {:?} start block: {} pct_to_fill: {:?} target_block: {:?}",
                         self.us_public,
                         auction_type,
                         auction_data.lot,
                         auction_data.bid,
+                        auction_data.block,
                         pending_fill.pct_to_fill,
-                        pending_fill.target_block - pending_fill.auction_data.block
+                        pending_fill.target_block
                     );
                 info!("{}", msg.clone());
                 send_slack_message(&self.slack_api_url_key, &msg).await?;
@@ -393,8 +395,9 @@ impl BlendLiquidator {
                     }
                     _ => Default::default(),
                 };
-
-                send_slack_message(&self.slack_api_url_key, &format!("Liquidator: {} has filled auction for user: {:?} with fill percentage: {:?} and auction type: {:?}", liquidator_id, liquidated_id, fill_percentage, auction_type)).await?;
+                let msg = format!("Liquidator: {} has filled auction for user: {:?} with fill percentage: {:?} and auction type: {:?}", liquidator_id, liquidated_id, fill_percentage, auction_type);
+                info!("{}", msg.clone());
+                send_slack_message(&self.slack_api_url_key, &msg).await?;
                 for (index, pending_fill) in self.pending_fill.clone().iter_mut().enumerate() {
                     if pending_fill.user == liquidated_id
                         && pending_fill.pool == pool_id
