@@ -170,7 +170,7 @@ async fn submit(
     let res = rpc.send_transaction_polling(&signed_tx_envelope).await?;
 
     let log_msg = format!(
-        "Submitted tx: {:?} with response: {:?}n",
+        "Submitted tx: {:?} with response: {:?}\n",
         match action.op.body.clone() {
             stellar_xdr::curr::OperationBody::InvokeHostFunction(body) => Some(body.host_function),
             _ => None,

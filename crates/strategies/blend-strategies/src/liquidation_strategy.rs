@@ -234,19 +234,16 @@ impl BlendLiquidator {
                     self.pending_fill.push(pending_fill.clone());
                 }
 
-                let status = if pending_fill.pct_to_fill > 0 {
-                    "picked up"
-                } else {
-                    "ignored"
-                };
                 let msg = format!(
-                    "Liquidator: {} has {} a new user liquidation auction for user: {:?} with lot: {:?} and bid: {:?}",
-                    self.us_public,
-                    status,
-                    user,
-                    auction_data.lot,
-                    auction_data.bid
-                );
+                        "<!channel> - Liquidator: {} found a new user liquidation auction for user: {:?} with lot: {:?} bid: {:?} pct_to_fill: {:?} target_block: {:?}",
+                        self.us_public,
+                        user,
+                        auction_data.lot,
+                        auction_data.bid,
+                        pending_fill.pct_to_fill,
+                        pending_fill.target_block - pending_fill.auction_data.block
+                    );
+                info!("{}", msg.clone());
                 send_slack_message(&self.slack_api_url_key, &msg).await?;
             }
             "delete_liquidation_auction" => {
@@ -309,8 +306,6 @@ impl BlendLiquidator {
                             .unwrap(),
                         )
                         .unwrap();
-
-                    info!(" New pending bad debt fill: {:?}", pending_fill.clone());
                     self.pending_fill.push(pending_fill.clone());
                     //we only care about lot here
                 } else if auction_type == 2 {
@@ -338,16 +333,10 @@ impl BlendLiquidator {
                         .unwrap(),
                     )?;
                     if pending_fill.pct_to_fill > 0 {
-                        info!("New pending interest fill: {:?}", pending_fill.clone());
                         self.pending_fill.push(pending_fill.clone());
                     }
                 }
 
-                let status = if pending_fill.pct_to_fill > 0 {
-                    "picked up"
-                } else {
-                    "ignored"
-                };
                 let auction_type = if auction_type == 1 {
                     "bad debt"
                 } else if auction_type == 2 {
@@ -355,15 +344,17 @@ impl BlendLiquidator {
                 } else {
                     "unknown"
                 };
-                send_slack_message(
-                    &self.slack_api_url_key,
-                    format!(
-                        "Liquidator: {} has {} a new {} auction with lot: {:?} and bid: {:?}",
-                        self.us_public, status, auction_type, auction_data.lot, auction_data.bid
-                    )
-                    .as_str(),
-                )
-                .await?
+                let msg = format!(
+                        "<!channel> - Liquidator: {} found a new {} auction with lot: {:?} bid: {:?} pct_to_fill: {:?} target_block: {:?}",
+                        self.us_public,
+                        auction_type,
+                        auction_data.lot,
+                        auction_data.bid,
+                        pending_fill.pct_to_fill,
+                        pending_fill.target_block - pending_fill.auction_data.block
+                    );
+                info!("{}", msg.clone());
+                send_slack_message(&self.slack_api_url_key, &msg).await?;
             }
             "fill_auction" => {
                 let liquidated_id = decode_scaddress_to_string(
