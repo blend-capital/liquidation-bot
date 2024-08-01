@@ -5,7 +5,7 @@ use crate::{
     file_logger::log_error,
     helper::{
         bstop_token_to_usdc, decode_auction_data, decode_scaddress_to_string, get_balance,
-        get_pool_positions, validate_assets,
+        get_pool_positions, send_slack_message, validate_assets,
     },
     transaction_builder::BlendTxBuilder,
     types::{Action, Config, Event, UserPositions},
@@ -206,23 +206,14 @@ impl BlendLiquidator {
                 info!("New liquidation auction for user: {:?}", user.to_string());
 
                 let auction_data = decode_auction_data(data)?;
-
-                if !self.slack_api_url_key.is_empty() {
-                    let client: reqwest::Client = reqwest::Client::new();
-                    let slack_msg = serde_json::json!({
-                    "text": format!("<!channel> - New user liquidation auction for {:?} with lot: {:?} and bid: {:?}",
-                        user,
-                        auction_data.lot,
-                        auction_data.bid
-                    )
-                })
-                .to_string();
-                    client
-                        .post(self.slack_api_url_key.clone())
-                        .body(slack_msg)
-                        .send()
-                        .await?;
-                }
+                let mut pending_fill = OngoingAuction::new(
+                    pool_id.clone(),
+                    user.clone(),
+                    auction_data.clone(),
+                    0,
+                    self.required_profit_pct,
+                    self.db_manager.clone(),
+                );
                 if validate_assets(
                     &auction_data.lot,
                     &auction_data.bid,
@@ -232,14 +223,6 @@ impl BlendLiquidator {
                     //update our positions
                     self.sync_liquidator(Some(pool_id.clone())).await.unwrap();
 
-                    let mut pending_fill = OngoingAuction::new(
-                        pool_id.clone(),
-                        user.clone(),
-                        auction_data.clone(),
-                        0,
-                        self.required_profit_pct,
-                        self.db_manager.clone(),
-                    );
                     pending_fill
                         .calc_liquidation_fill(self.bankroll.get(&pool_id).unwrap(), self.min_hf)
                         .unwrap();
@@ -248,8 +231,21 @@ impl BlendLiquidator {
                         user,
                         pending_fill.target_block.clone()
                     );
-                    self.pending_fill.push(pending_fill);
+                    self.pending_fill.push(pending_fill.clone());
                 }
+
+                let msg = format!(
+                        "<!channel> - Liquidator: {} found a new user liquidation auction for user: {:?} with lot: {:?} bid: {:?} start block: {} pct_to_fill: {:?} target_block: {:?}",
+                        self.us_public,
+                        user,
+                        auction_data.lot,
+                        auction_data.bid,
+                        auction_data.block,
+                        pending_fill.pct_to_fill,
+                        pending_fill.target_block
+                    );
+                info!("{}", msg.clone());
+                send_slack_message(&self.slack_api_url_key, &msg).await?;
             }
             "delete_liquidation_auction" => {
                 // If this was an auction we were planning on filling, remove it from the pending list
@@ -263,7 +259,6 @@ impl BlendLiquidator {
                 }
             }
             "new_auction" => {
-                info!("New Auction Event");
                 let mut auction_type = 0;
                 match ScVal::from_xdr_base64(event.topic[1].as_bytes(), Limits::none()).unwrap() {
                     ScVal::U32(num) => {
@@ -272,28 +267,6 @@ impl BlendLiquidator {
                     _ => (),
                 }
                 let auction_data = decode_auction_data(data)?;
-                if !self.slack_api_url_key.is_empty() {
-                    let client: reqwest::Client = reqwest::Client::new();
-                    let slack_msg = serde_json::json!({
-                        "text": format!("<!channel> - New {} auction with lot: {:?} and bid: {:?}",
-                             if auction_type == 1 {
-                                "bad debt"
-                            } else if auction_type == 2{
-                                "interest"
-                            } else {
-                                "unknown auction type"
-                            },
-                            auction_data.lot,
-                            auction_data.bid
-                        )
-                    })
-                    .to_string();
-                    client
-                        .post(self.slack_api_url_key.clone())
-                        .body(slack_msg)
-                        .send()
-                        .await?;
-                }
                 let mut pending_fill = OngoingAuction::new(
                     pool_id.clone(),
                     self.backstop_id.clone(),
@@ -334,10 +307,9 @@ impl BlendLiquidator {
                             .unwrap(),
                         )
                         .unwrap();
-                    info!(" New pending bad debt fill: {:?}", pending_fill.clone());
-                    self.pending_fill.push(pending_fill);
+                    self.pending_fill.push(pending_fill.clone());
                     //we only care about lot here
-                } else {
+                } else if auction_type == 2 {
                     //update our wallet
                     self.sync_liquidator(Some(pool_id.clone())).await?;
                     //Interest auction
@@ -362,10 +334,29 @@ impl BlendLiquidator {
                         .unwrap(),
                     )?;
                     if pending_fill.pct_to_fill > 0 {
-                        info!("New pending interest fill: {:?}", pending_fill.clone());
-                        self.pending_fill.push(pending_fill);
+                        self.pending_fill.push(pending_fill.clone());
                     }
                 }
+
+                let auction_type = if auction_type == 1 {
+                    "bad debt"
+                } else if auction_type == 2 {
+                    "interest"
+                } else {
+                    "unknown"
+                };
+                let msg = format!(
+                        "<!channel> - Liquidator: {} found a new {} auction with lot: {:?} bid: {:?} start block: {} pct_to_fill: {:?} target_block: {:?}",
+                        self.us_public,
+                        auction_type,
+                        auction_data.lot,
+                        auction_data.bid,
+                        auction_data.block,
+                        pending_fill.pct_to_fill,
+                        pending_fill.target_block
+                    );
+                info!("{}", msg.clone());
+                send_slack_message(&self.slack_api_url_key, &msg).await?;
             }
             "fill_auction" => {
                 let liquidated_id = decode_scaddress_to_string(
@@ -404,11 +395,9 @@ impl BlendLiquidator {
                     }
                     _ => Default::default(),
                 };
-                info!(
-                    "Auction filled, user: {:?}, liquidator {:?}",
-                    liquidated_id, liquidator_id
-                );
-
+                let msg = format!("Liquidator: {} has filled auction for user: {:?} with fill percentage: {:?} and auction type: {:?}", liquidator_id, liquidated_id, fill_percentage, auction_type);
+                info!("{}", msg.clone());
+                send_slack_message(&self.slack_api_url_key, &msg).await?;
                 for (index, pending_fill) in self.pending_fill.clone().iter_mut().enumerate() {
                     if pending_fill.user == liquidated_id
                         && pending_fill.pool == pool_id
@@ -421,25 +410,12 @@ impl BlendLiquidator {
                             if pool_positions.liabilities.len() > 0
                                 || pool_positions.collateral.len() > 1
                             {
-                                let alert_msg = format!("Liquidator {:?} has failed to clear positions. Liabilities: {:?}, Collateral: {:?}", 
+                                let alert_msg = format!("<!channel> Liquidator {:?} has failed to clear positions. Liabilities: {:?}, Collateral: {:?}", 
                                     self.us_public,
                                     pool_positions.liabilities,
                                     pool_positions.collateral
                                 );
-                                let slack_msg = serde_json::json!({
-                                    "text": format!("<!channel> - {}",
-                                    alert_msg.clone()
-                                    )
-                                })
-                                .to_string();
-                                if !self.slack_api_url_key.is_empty() {
-                                    let client: reqwest::Client = reqwest::Client::new();
-                                    client
-                                        .post(self.slack_api_url_key.clone())
-                                        .body(slack_msg.clone())
-                                        .send()
-                                        .await?;
-                                }
+                                send_slack_message(&self.slack_api_url_key, &alert_msg).await?;
                                 info!("{}", alert_msg.clone());
                             }
                             self.db_manager
