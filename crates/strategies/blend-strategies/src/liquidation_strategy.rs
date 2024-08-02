@@ -507,6 +507,7 @@ impl BlendLiquidator {
                         &self.supported_collateral,
                         &self.min_hf,
                         event.number + 1,
+                        &self.xlm_address,
                     )?;
                     info!(
                         "Sending auction fill to executor for user: {:?} with requests: {:?}",
@@ -833,7 +834,7 @@ impl BlendLiquidator {
     }
     // checks if we should fill the auction
     fn assess_fill(&self, block: u32, pending_fill: &OngoingAuction) -> bool {
-        if self.force_fill {
+        if self.force_fill && pending_fill.block_submitted < block {
             if (pending_fill.auction_type == 0 || pending_fill.auction_type == 1)
                 && (block - pending_fill.auction_data.block) >= 198
             {
